@@ -1,0 +1,50 @@
+# Prep files & local design assets
+prep files/
+prep files
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs & caches
+dist/
+build/
+.turbo/
+out/
+.next/
+
+# Cloudflare Workers & Wrangler
+.wrangler/
+.dev.vars
+
+# Environment files
+.env
+.env*.local
+.env.*
+!.env.example
+
+# Expo & Mobile
+.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
