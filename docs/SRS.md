@@ -13,21 +13,23 @@
 - A player disconnected for more than 60 seconds forfeits. Phones are not special-cased.
 - In-game text chat included for all matches (with mute, block, and report).
 - Optional 1-on-1 opt-in voice chat included for Private Friend games only (WebRTC peer-to-peer via `GameRoomDO` signaling).
+- Aligned with `docs/ET-Chess-UX-Specification.md`: unified error notification system, empty states A+B model, hierarchical back navigation, disconnection board blur + circular loader, unrated friend-game time gifts (+15s/+30s), and rematch flow.
 
 **Fixes from the quality review** (marked *Proposed* in §20 until HUN confirms)
 - Resolved contradictions: bots run client-side only (WASM on web, on-device on mobile); Expo Go dropped; time-control list unified; premoves are client-only.
 - Added: game lifecycle and abort rules, Durable Object persistence rules, anti-abuse limits, REST API surface, matchmaking/queue protocol messages, security requirements, measurable NFRs, observability, CI quality gates, decision log, open items.
 - Schema: `ratings` stores Glicko-2 rating, deviation, and volatility; `live_games`, `live_game_players`, `reports`, `user_blocks`, `audit_logs` added, `game_moves.fen_after` removed, result enum fixed.
-- Cut from V1: time gift, openings search, admin Verifications/Settlements, extra piece styles beyond Classic, "Better Moves Every Day" banner, matchmaking ETA.
+- Cut from V1: openings search, admin Verifications/Settlements, extra piece styles beyond Classic, "Better Moves Every Day" banner, matchmaking ETA.
 
 ---
 
 ## 0. Conventions
 
-- **Requirement IDs** (`GAME-`, `BOT-`, `RATE-`, `MM-`, `CHAL-`, `CHAT-`, `PROTO-`, `SEC-`, `NFR-`, `QA-`) identify testable requirements. **MUST** = required for V1. **SHOULD** = strongly preferred; deviation needs a Decision Log entry.
+- **Requirement IDs** (`GAME-`, `BOT-`, `RATE-`, `MM-`, `CHAL-`, `CHAT-`, `UX-`, `PROTO-`, `SEC-`, `NFR-`, `QA-`) identify testable requirements. **MUST** = required for V1. **SHOULD** = strongly preferred; deviation needs a Decision Log entry.
 - Every requirement MUST be covered by an automated test or a documented manual check before it is marked done.
 - Items marked **(OI-n)** depend on an Open Item in §21.
 - Numeric limits in this document are **starting values**. They live in config constants (never inline) and may be tuned after measurement.
+- Behavioral UX patterns align directly with `docs/ET-Chess-UX-Specification.md`.
 
 ---
 
@@ -441,6 +443,8 @@ Single source of truth: `TIME_CONTROLS` in `packages/types`.
 - **CHAL-06** Limits: ≤ 5 pending outgoing challenges per user; ≤ 1 pending per recipient.
 - **CHAL-07** `share_code` is ≥ 128-bit random.
 - **CHAL-08** Takebacks are available only in **unrated** friend games (GAME-42).
+- **CHAL-09** **Time Gifts**: In unrated friend games, a player may grant extra time (+15 s or +30 s) to the opponent's clock. The server immediately credits `remainingMs` in `GameRoomDO` and broadcasts the update. Strictly disabled in rated matches.
+- **CHAL-10** **Rematch Flow**: On the Game Over screen, either player may request a **Rematch**. Accepting generates a new `GameRoomDO` with identical time control, alternating starting colors.
 
 ### 8.5 In-Game Chat & Voice in Friend Matches
 
@@ -706,6 +710,9 @@ interface WebSocketEnvelope<TType extends string, TPayload> {
 | `RESIGN` | `{}` | Resign game |
 | `TAKEBACK_REQUEST` | `{}` | Unrated friend games only |
 | `TAKEBACK_RESPONSE` | `{ accept: boolean }` | Accept or decline takeback |
+| `TIME_GIFT` | `{ addedSeconds: 15\|30 }` | Unrated friend games only |
+| `REMATCH_REQUEST` | `{}` | Request rematch on game end |
+| `REMATCH_RESPONSE` | `{ accept: boolean }` | Accept or decline rematch |
 | `HEARTBEAT_PING` | `{ clientTimestamp }` | Latency measurement (every 5 s) |
 | `CHAT_SEND` | `{ text: string }` | Send in-game text message (≤ 280 chars) |
 | `VOICE_SIGNAL` | `{ signalType: 'offer'\|'answer'\|'candidate', data: any }` | WebRTC signaling (Private friend games only) |
@@ -722,6 +729,9 @@ interface WebSocketEnvelope<TType extends string, TPayload> {
 | `DRAW_DECLINED` | `{}` | Draw offer rejected |
 | `TAKEBACK_OFFERED` | `{ requestedBy }` | Takeback requested |
 | `TAKEBACK_RESOLVED` | `{ accepted, restoredFen, restoredPly, whiteTimeMs, blackTimeMs }` | Revert board state if accepted |
+| `TIME_GIFTED` | `{ recipientColor: 'w'\|'b', addedSeconds: number, whiteTimeMs: number, blackTimeMs: number }` | Time gift applied to clock |
+| `REMATCH_OFFERED` | `{ challengerId: string }` | Opponent requested rematch |
+| `REMATCH_DECLINED` | `{}` | Rematch request declined |
 | `OPPONENT_PRESENCE` | `{ connected, graceRemainingSeconds? }` | Disconnect/reconnect with 60 s countdown |
 | `GAME_TERMINATED` | `{ result: 'white_win'\|'black_win'\|'draw'\|'aborted', terminationReason, whiteRatingAfter?, blackRatingAfter?, whiteRatingDelta?, blackRatingDelta? }` | Game over |
 | `HEARTBEAT_PONG` | `{ clientTimestamp, serverTimestamp, estimatedLagMs, whiteTimeMs, blackTimeMs, activeColor }` | Latency + authoritative clock resync |
@@ -817,11 +827,12 @@ The visual design derives from the canonical mockups (`web mockup.png`, `web moc
 4. **Check**: crimson radial pulse (`#EF4444`) under the threatened king.
 5. **Premoves**: muted cyan/blue highlight of origin/destination; cancel by right-click or tapping an empty square. Held on the client (GAME-25).
 6. **Clock urgency**: > 20 s crisp white on dark; active turn emerald glow; < 20 s amber; < 10 s pulsing red with subtle audio tick.
+7. **Leave Active Game Confirmation**: Attempting to exit an active game triggers a modal confirmation dialog with a dark backdrop warning that leaving results in an immediate loss/forfeit (per UX Spec §11). Finished games do not trigger this confirmation.
 
 ### 12.6 Network Status & Reconnection Overlays
 
 1. **Connecting...** — amber badge during initial connection.
-2. **Reconnecting...** — amber pulsating banner: "Reconnecting... Trying to restore connection".
+2. **Reconnecting...** — amber pulsating banner: "Reconnecting... Trying to restore connection". The chessboard remains visible in the background, blurred, with a centered circular loading spinner (per UX Spec §5, §8, §23) while authoritative clocks continue ticking.
 3. **Opponent Disconnected** — persistent amber banner "Opponent Disconnected — waiting for them to return" with a visible **60-second countdown**.
 4. **Connection Unstable** — red toast when server-measured RTT exceeds 250 ms.
 5. **Game Resumed** — green toast "Game Resumed. Connection restored."
@@ -846,6 +857,19 @@ The visual design derives from the canonical mockups (`web mockup.png`, `web moc
    - Controls: Mute/Unmute microphone, deafen, leave voice.
    - Text chat remains interactive while voice is active.
    - Peer-to-peer WebRTC audio via `GameRoomDO` signaling.
+
+### 12.8 Global Behavioral UX Standards (from ET-Chess-UX-Specification.md)
+
+| ID | Rule | Observable Behavior |
+|---|---|---|
+| UX-SESS-01 | **Startup Flow & Session Persistence** | Splash screen validates session invisibly in the background; a valid session leads directly into Home without flashing auth screens. An invalid session leads to Guest / Entry. Session remains persistent until explicit logout. |
+| UX-NAV-01 | **Hierarchical Back Navigation** | Single back action returns to the immediate parent page in the hierarchy, terminating at Home. |
+| UX-NAV-02 | **Mobile Exit** | Two rapid back actions from Home close/exit the mobile application. |
+| UX-ERR-01 | **Unified In-App Error System** | Contextual toasts/banners with actionable recovery buttons (Retry, Reconnect, Dismiss) rather than one-off custom error patterns. No silent failures; internal error details are redacted. |
+| UX-EMPTY-01| **Empty States (A + B Model)** | Concise message + relevant primary CTA button if applicable (e.g., "You haven't added any friends yet" → **Add Friend**; "No games played yet" → **Play a Game**; "No players found" → message only). No decorative illustrations required. |
+| UX-CONF-01 | **Consequential Confirmation** | Modal dialogs with dark backdrops used strictly for irreversible/consequential actions (leaving an active game, account deletion). Routine actions are never confirmed. |
+| UX-TIME-01 | **Friend Game Time Gifts** | In unrated friend games, a player may grant extra time (+15 s or +30 s) to the opponent's clock. The server immediately credits `remainingMs` in `GameRoomDO` and broadcasts the update. |
+| UX-REMATCH-01| **Rematch Flow** | On the Game Over screen, either player may request a **Rematch**. Accepting generates a new `GameRoomDO` with identical time control, alternating starting colors. |
 
 ---
 
@@ -1083,7 +1107,7 @@ Before "ready": all MUST requirements have passing tests; every blocker/high fin
 | D-06 | 2026-10-02 | Takebacks disabled in all rated games; rated friend games allowed with a pair cap of 5 per 24 h | Proposed |
 | D-07 | 2026-10-02 | Threefold repetition is automatic; 50-move rule is automatic at halfmove clock 100 | Proposed |
 | D-08 | 2026-10-02 | Time-control list unified (11 presets, §8.2); category formula test | Proposed |
-| D-09 | 2026-10-02 | Cut from V1: time gift, openings search, admin Verifications/Settlements, extra piece styles, mobile banner, matchmaking ETA | Proposed |
+| D-09 | 2026-10-02 | Cut from V1: openings search, admin Verifications/Settlements, extra piece styles beyond Classic, mobile banner, matchmaking ETA (Time Gifts retained in unrated friend games per UX Spec) | Proposed |
 | D-10 | 2026-10-02 | Abort rules: 30 s first-move deadline, clocks start after each side's first move, no rating change when aborted | Proposed |
 | D-11 | 2026-10-02 | One live online game per user; one game socket per user per game | Proposed |
 | D-12 | 2026-10-02 | Challenges are REST-only; WebSocket only pushes. Direct challenges 60 s, link challenges 10 min | Proposed |
@@ -1093,6 +1117,7 @@ Before "ready": all MUST requirements have passing tests; every blocker/high fin
 | D-16 | 2026-10-02 | Local/computer games playable without an account; online requires an account | Proposed |
 | D-17 | 2026-10-02 | Matchmaking range ±100, +50 per 5 s, cap ±600, timeout 120 s | Proposed |
 | D-18 | 2026-10-02 | Draw offers allowed only once each side has made 2 moves | Proposed |
+| D-21 | 2026-10-02 | Integrated behavioral UX rules from ET-Chess-UX-Specification.md: empty states A+B model, hierarchical back navigation, disconnection board blur + circular loader, active game exit confirmation | **Decided by HUN** |
 
 ---
 
