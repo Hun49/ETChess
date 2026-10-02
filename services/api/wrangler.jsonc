@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "etchess-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-02-24",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "etchess-d1",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME_ROOM_DO",
+        "class_name": "GameRoomDO"
+      },
+      {
+        "name": "MATCHMAKER_DO",
+        "class_name": "MatchmakerDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "GameRoomDO",
+        "MatchmakerDO"
+      ]
+    }
+  ],
+  "vars": {
+    "BETTER_AUTH_SECRET": "development_better_auth_secret_key_minimum_32_characters",
+    "BETTER_AUTH_URL": "http://localhost:8787"
+  }
+}
