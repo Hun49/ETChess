@@ -18,7 +18,21 @@ import { LocalUciEngineTransport } from "../lib/localUciEngine";
 import { sound } from "../lib/sound";
 
 export type GameMode = "idle" | "matchmaking" | "online" | "bot" | "pass_and_play";
-export type BoardTheme = "slate" | "wood" | "emerald" | "ocean";
+export type BoardTheme = "classic" | "wood" | "blue" | "dark" | "slate" | "emerald" | "ocean";
+export type AppView =
+  | "home"
+  | "play_online"
+  | "play_friend"
+  | "play_computer"
+  | "play_local"
+  | "searching"
+  | "match_found"
+  | "game"
+  | "game_over"
+  | "analysis"
+  | "history"
+  | "profile"
+  | "settings";
 
 export interface PlayerInfo {
   id?: string;
@@ -35,8 +49,23 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface GameSettings {
+  boardTheme: "classic" | "wood" | "blue" | "dark";
+  pieceStyle: "classic" | "modern" | "minimal";
+  coordinates: boolean;
+  boardSize: number;
+  animations: boolean;
+  moveSound: boolean;
+  captureSound: boolean;
+  checkSound: boolean;
+  gameEndSound: boolean;
+  clockWarning: boolean;
+}
+
 export interface GameState {
-  // Navigation & Mode
+  // Navigation & Screen View
+  activeView: AppView;
+  setActiveView: (view: AppView) => void;
   mode: GameMode;
   gameId: string | null;
   timeControl: TimeControlKey;
@@ -81,6 +110,21 @@ export interface GameState {
   rematchAccepted: boolean;
   chatMessages: ChatMessage[];
 
+  // Matchmaking & Friend Challenge
+  matchFoundCountdown: number;
+  friendChallenge: {
+    id: string;
+    timeControl: TimeControlKey;
+    color: "white" | "black" | "random";
+    rated: boolean;
+    takeback: boolean;
+    timeGift: boolean;
+  } | null;
+
+  // App Settings
+  settings: GameSettings;
+  updateSettings: (partial: Partial<GameSettings>) => void;
+
   // Sound & Modals
   isSoundMuted: boolean;
   activeModal: "auth" | "profile" | "play" | "leaderboard" | "game_over" | null;
@@ -101,6 +145,14 @@ export interface GameState {
   ) => void;
   joinMatchmaking: (tc: TimeControlKey, rated: boolean) => void;
   leaveMatchmaking: () => void;
+  createFriendChallenge: (config: {
+    timeControl: TimeControlKey;
+    color: "white" | "black" | "random";
+    rated: boolean;
+    takeback: boolean;
+    timeGift: boolean;
+  }) => string;
+  cancelFriendChallenge: () => void;
   makeMove: (from: string, to: string, promotion?: "q" | "r" | "b" | "n") => boolean;
   resign: () => void;
   offerDraw: () => void;
@@ -121,15 +173,20 @@ let clockIntervalId: number | null = null;
 
 const TC_CONFIG: Record<TimeControlKey, { initialMs: number; incMs: number }> = {
   "1+0": { initialMs: 60 * 1000, incMs: 0 },
+  "2+0": { initialMs: 120 * 1000, incMs: 0 },
   "3+0": { initialMs: 3 * 60 * 1000, incMs: 0 },
   "3+2": { initialMs: 3 * 60 * 1000, incMs: 2000 },
   "5+0": { initialMs: 5 * 60 * 1000, incMs: 0 },
+  "5+3": { initialMs: 5 * 60 * 1000, incMs: 3000 },
   "10+0": { initialMs: 10 * 60 * 1000, incMs: 0 },
+  "10+5": { initialMs: 10 * 60 * 1000, incMs: 5000 },
   "15+10": { initialMs: 15 * 60 * 1000, incMs: 10000 },
   "30+0": { initialMs: 30 * 60 * 1000, incMs: 0 },
 };
 
 export const useGameStore = create<GameState>((set, get) => ({
+  activeView: "home",
+  setActiveView: (view) => set({ activeView: view }),
   mode: "idle",
   gameId: null,
   timeControl: "3+2",
@@ -140,7 +197,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   turn: "w",
   playerColor: "white",
   boardOrientation: "white",
-  boardTheme: "slate",
+  boardTheme: "classic",
   moves: [],
   lastMove: null,
   isCheck: false,
@@ -167,6 +224,28 @@ export const useGameStore = create<GameState>((set, get) => ({
   rematchAccepted: false,
   chatMessages: [],
 
+  matchFoundCountdown: 3,
+  friendChallenge: null,
+
+  settings: {
+    boardTheme: "classic",
+    pieceStyle: "classic",
+    coordinates: true,
+    boardSize: 100,
+    animations: true,
+    moveSound: true,
+    captureSound: true,
+    checkSound: true,
+    gameEndSound: true,
+    clockWarning: true,
+  },
+
+  updateSettings: (partial) =>
+    set((state) => ({
+      settings: { ...state.settings, ...partial },
+      boardTheme: partial.boardTheme ?? state.boardTheme,
+    })),
+
   isSoundMuted: sound.isSoundMuted(),
   activeModal: null,
 
@@ -184,6 +263,18 @@ export const useGameStore = create<GameState>((set, get) => ({
     set((state) => ({
       boardOrientation: state.boardOrientation === "white" ? "black" : "white",
     })),
+
+  createFriendChallenge: (config) => {
+    const id = Math.random().toString(36).substring(2, 8);
+    set({
+      friendChallenge: { ...config, id },
+      timeControl: config.timeControl,
+      rated: config.rated,
+    });
+    return id;
+  },
+
+  cancelFriendChallenge: () => set({ friendChallenge: null }),
 
   // Reset to Lobby / Landing
   resetToIdle: () => {
@@ -209,6 +300,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     set({
+      activeView: "home",
       mode: "idle",
       gameId: null,
       status: "idle",
@@ -231,6 +323,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const config = TC_CONFIG[tc];
 
     set({
+      activeView: "game",
       mode: "pass_and_play",
       timeControl: tc,
       whitePlayer: { name: "Player 1 (White)", rating: 1500 },
@@ -270,6 +363,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const botRating = tier === "beginner" ? 600 : tier === "intermediate" ? 1400 : 2000;
 
     set({
+      activeView: "game",
       mode: "bot",
       botTier: tier,
       timeControl: tc,
@@ -321,6 +415,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     activeMatchmakerWs = ws;
 
     set({
+      activeView: "searching",
       mode: "matchmaking",
       timeControl: tc,
       rated,
@@ -345,19 +440,44 @@ export const useGameStore = create<GameState>((set, get) => ({
         ws.close();
         activeMatchmakerWs = null;
 
-        // Connect directly to GameRoomDO
-        connectToOnlineGame(
-          frame.payload.gameId,
-          frame.payload.color,
-          frame.payload.opponent,
-          set,
-          get,
-        );
+        const myColor = frame.payload.color;
+        const opponent = frame.payload.opponent;
+
+        set({
+          activeView: "match_found",
+          matchFoundCountdown: 3,
+          whitePlayer:
+            myColor === "white"
+              ? { name: "You", rating: 1567 }
+              : { name: opponent.name, rating: opponent.rating },
+          blackPlayer:
+            myColor === "black"
+              ? { name: "You", rating: 1567 }
+              : { name: opponent.name, rating: opponent.rating },
+        });
+
+        // Countdown: 3, 2, 1, then connect to game room
+        let count = 3;
+        const timer = setInterval(() => {
+          count--;
+          if (count > 0) {
+            set({ matchFoundCountdown: count });
+          } else {
+            clearInterval(timer);
+            connectToOnlineGame(
+              frame.payload.gameId,
+              frame.payload.color,
+              frame.payload.opponent,
+              set,
+              get,
+            );
+          }
+        }, 1000);
       }
     };
 
     ws.onerror = () => {
-      set({ mode: "idle" });
+      set({ activeView: "play_online", mode: "idle" });
     };
   },
 
@@ -370,7 +490,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       activeMatchmakerWs.close();
       activeMatchmakerWs = null;
     }
-    set({ mode: "idle" });
+    set({ activeView: "play_online", mode: "idle" });
   },
 
   // Make move on board
@@ -669,17 +789,18 @@ function connectToOnlineGame(
   activeGameWs = ws;
 
   set({
+    activeView: "game",
     mode: "online",
     gameId,
     playerColor,
     boardOrientation: playerColor,
     whitePlayer:
       playerColor === "white"
-        ? { name: "You", rating: 1500 }
+        ? { name: "You", rating: 1567 }
         : { name: opponent.name, rating: opponent.rating, id: opponent.id },
     blackPlayer:
       playerColor === "black"
-        ? { name: "You", rating: 1500 }
+        ? { name: "You", rating: 1567 }
         : { name: opponent.name, rating: opponent.rating, id: opponent.id },
     status: "active",
     fen: STARTING_FEN,
@@ -750,6 +871,7 @@ function connectToOnlineGame(
     } else if (frame.type === "GAME_ENDED") {
       sound.playGameOver();
       set({
+        activeView: "game_over",
         status: "ended",
         result: frame.payload.result,
         termination: frame.payload.termination,

@@ -24,6 +24,18 @@ const THEME_STYLES: Record<BoardTheme, { light: React.CSSProperties; dark: React
       light: { backgroundColor: "#dee3e6" },
       dark: { backgroundColor: "#386687" },
     },
+    classic: {
+      light: { backgroundColor: "#e2e8f0" },
+      dark: { backgroundColor: "#2d6a4f" },
+    },
+    blue: {
+      light: { backgroundColor: "#dee3e6" },
+      dark: { backgroundColor: "#386687" },
+    },
+    dark: {
+      light: { backgroundColor: "#334155" },
+      dark: { backgroundColor: "#1e293b" },
+    },
   };
 
 const PIECE_SYMBOLS: Record<string, string> = {
