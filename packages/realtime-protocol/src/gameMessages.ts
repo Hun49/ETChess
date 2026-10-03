@@ -182,6 +182,7 @@ export const ServerGameSnapshotPayloadSchema = z.object({
   spectatorCount: z.number().optional().default(0),
   result: z.enum(["1-0", "0-1", "1/2-1/2", "aborted"]).optional(),
   termination: z.string().optional(),
+  winner: z.enum(["white", "black"]).optional(),
 });
 
 export const ServerMoveAcceptedPayloadSchema = z.object({

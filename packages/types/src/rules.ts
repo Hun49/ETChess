@@ -81,6 +81,7 @@ export const PRODUCT_RULES = {
 
   /** RULE-15: Canonical Glicko-2 default rating volatility (sigma). */
   GLICKO2_DEFAULT_VOL: 0.06,
+  GLICKO2_DEFAULT_VOLATILITY: 0.06,
 
   /** RULE-15: Canonical Glicko-2 system constant (tau). */
   GLICKO2_TAU: 0.5,

@@ -109,24 +109,27 @@ export class MatchmakerDO extends DurableObject<Env> {
           const whitePlayer = isUserWhite ? attachment : opponent;
           const blackPlayer = isUserWhite ? opponent : attachment;
 
-          // Pre-initialize GameRoomDO
+          // Pre-initialize GameSessionDO
           try {
-            const roomDO = this.env.GAME_ROOM_DO.get(this.env.GAME_ROOM_DO.idFromName(gameId));
-            await roomDO.fetch("http://internal/init", {
+            const ns = this.env.GAME_SESSION_DO || this.env.GAME_ROOM_DO;
+            const sessionStub = ns.get(ns.idFromName(gameId));
+            await sessionStub.fetch("http://internal/init", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 gameId,
                 whiteUserId: whitePlayer.userId,
                 whiteUserName: whitePlayer.userName,
+                whiteRating: whitePlayer.rating,
                 blackUserId: blackPlayer.userId,
                 blackUserName: blackPlayer.userName,
+                blackRating: blackPlayer.rating,
                 timeControl,
                 rated,
               }),
             });
           } catch (err) {
-            console.error("Failed to pre-initialize GameRoomDO:", err);
+            console.error("Failed to pre-initialize GameSessionDO:", err);
           }
 
           // Send MATCH_FOUND to current player

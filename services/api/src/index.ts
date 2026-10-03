@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createAuth } from "./auth";
-import { GameRoomDO } from "./do/GameRoomDO";
+import { GameSessionDO } from "./do/GameSessionDO";
 import { MatchmakerDO } from "./do/MatchmakerDO";
 import { globalErrorHandler, globalNotFoundHandler } from "./middleware/errorHandler";
 import { requestLoggerMiddleware } from "./middleware/logger";
@@ -15,7 +15,7 @@ import { ticketRoute } from "./routes/tickets";
 import { usersRoute } from "./routes/users";
 import type { Env } from "./types";
 
-export { GameRoomDO, MatchmakerDO };
+export { GameSessionDO, GameSessionDO as GameRoomDO, MatchmakerDO };
 
 const app = new Hono<{
   Bindings: Env;
@@ -86,8 +86,8 @@ const routes = app
   .route("/api/users", usersRoute)
   .route("/api/admin", adminRoute);
 
-// 9. WebSocket Proxy to GameRoomDO
-app.get("/ws/game/:roomId", async (c) => {
+// 9. WebSocket Proxy to GameSessionDO
+app.get("/ws/game/:gameId", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(
       {
@@ -99,9 +99,10 @@ app.get("/ws/game/:roomId", async (c) => {
       426,
     );
   }
-  const roomId = c.req.param("roomId");
-  const id = c.env.GAME_ROOM_DO.idFromName(roomId);
-  const stub = c.env.GAME_ROOM_DO.get(id);
+  const gameId = c.req.param("gameId");
+  const ns = c.env.GAME_SESSION_DO || c.env.GAME_ROOM_DO;
+  const id = ns.idFromName(gameId);
+  const stub = ns.get(id);
   return stub.fetch(c.req.raw);
 });
 

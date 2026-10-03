@@ -2,6 +2,7 @@ declare global {
   namespace Cloudflare {
     interface Env {
       DB: D1Database;
+      GAME_SESSION_DO: DurableObjectNamespace;
       GAME_ROOM_DO: DurableObjectNamespace;
       MATCHMAKER_DO: DurableObjectNamespace;
       BETTER_AUTH_SECRET: string;

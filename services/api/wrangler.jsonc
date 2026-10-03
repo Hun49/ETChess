@@ -17,8 +17,12 @@
   "durable_objects": {
     "bindings": [
       {
+        "name": "GAME_SESSION_DO",
+        "class_name": "GameSessionDO"
+      },
+      {
         "name": "GAME_ROOM_DO",
-        "class_name": "GameRoomDO"
+        "class_name": "GameSessionDO"
       },
       {
         "name": "MATCHMAKER_DO",
@@ -30,6 +34,7 @@
     {
       "tag": "v1",
       "new_sqlite_classes": [
+        "GameSessionDO",
         "GameRoomDO",
         "MatchmakerDO"
       ]
