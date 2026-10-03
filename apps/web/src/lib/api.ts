@@ -5,7 +5,7 @@ import { hc } from "hono/client";
 const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
 
 export const authClient = createAuthClient({
-  baseURL: `${origin}/api/auth`,
+  baseURL: origin,
 });
 
 export const { signIn, signUp, signOut, useSession } = authClient;

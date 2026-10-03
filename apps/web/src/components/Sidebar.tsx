@@ -17,7 +17,7 @@ import { useSession } from "../lib/api";
 import { type AppView, useGameStore } from "../store/gameStore";
 
 export const Sidebar: React.FC = () => {
-  const { activeView, setActiveView } = useGameStore();
+  const { activeView, setActiveView, openModal } = useGameStore();
   const { data: session } = useSession();
   const [playMenuOpen, setPlayMenuOpen] = useState(true);
 
@@ -204,24 +204,40 @@ export const Sidebar: React.FC = () => {
 
       {/* User Profile Card at Bottom */}
       <div className="p-3 border-t border-[#14282c]/80">
-        <button
-          type="button"
-          onClick={() => setActiveView("profile")}
-          className="flex w-full items-center gap-3 p-2 rounded-xl bg-[#0e1e22] hover:bg-[#122429] transition-colors border border-[#162c31]"
-        >
-          <div className="relative">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#18363c] text-white font-bold text-xs border border-[#234e57]">
-              {userName.charAt(0).toUpperCase()}
+        {session?.user ? (
+          <button
+            type="button"
+            onClick={() => setActiveView("profile")}
+            className="flex w-full items-center gap-3 p-2 rounded-xl bg-[#0e1e22] hover:bg-[#122429] transition-colors border border-[#162c31]"
+          >
+            <div className="relative">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#18363c] text-white font-bold text-xs border border-[#234e57]">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[#00e699] ring-2 ring-[#081214]" />
             </div>
-            <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[#00e699] ring-2 ring-[#081214]" />
-          </div>
-          <div className="text-left overflow-hidden">
-            <div className="text-xs font-bold text-white truncate">{userName}</div>
-            <div className="text-[10px] text-[#00e699] font-medium flex items-center gap-1">
-              <span>Online</span>
+            <div className="text-left overflow-hidden">
+              <div className="text-xs font-bold text-white truncate">{userName}</div>
+              <div className="text-[10px] text-[#00e699] font-medium flex items-center gap-1">
+                <span>Online</span>
+              </div>
             </div>
-          </div>
-        </button>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => openModal("auth")}
+            className="flex w-full items-center gap-3 p-2 rounded-xl bg-[#0e1e22] hover:bg-[#14282c] transition-colors border border-[#162c31]"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#00e699]/15 text-[#00e699] font-bold text-xs border border-[#00e699]/30">
+              <User className="h-4 w-4" />
+            </div>
+            <div className="text-left overflow-hidden">
+              <div className="text-xs font-bold text-white">Sign In / Register</div>
+              <div className="text-[10px] text-[#8ba3a8] font-medium">Guest Mode</div>
+            </div>
+          </button>
+        )}
       </div>
     </aside>
   );

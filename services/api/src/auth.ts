@@ -32,6 +32,33 @@ export function createAuth(env: Env) {
         },
       },
     },
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (createdUser) => {
+            await db
+              .insert(schema.ratings)
+              .values({
+                userId: createdUser.id,
+                bulletRating: 1500,
+                bulletRd: 350,
+                bulletVol: 0.06,
+                blitzRating: 1500,
+                blitzRd: 350,
+                blitzVol: 0.06,
+                rapidRating: 1500,
+                rapidRd: 350,
+                rapidVol: 0.06,
+                classicalRating: 1500,
+                classicalRd: 350,
+                classicalVol: 0.06,
+                updatedAt: new Date(),
+              })
+              .onConflictDoNothing();
+          },
+        },
+      },
+    },
   });
 }
 
