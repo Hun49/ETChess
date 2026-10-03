@@ -22,6 +22,7 @@ export type SessionData = {
 export interface HonoVariables {
   user: SessionUser | null;
   session: SessionData | null;
+  requestId: string;
 }
 
 export const sessionMiddleware: MiddlewareHandler<{
@@ -44,7 +45,15 @@ export const sessionMiddleware: MiddlewareHandler<{
       } else {
         c.set("user", null);
         c.set("session", null);
-        return c.json({ error: "Account is banned" }, 403);
+        return c.json(
+          {
+            error: {
+              code: "FORBIDDEN",
+              message: "Account is banned",
+            },
+          },
+          403,
+        );
       }
     } else {
       c.set("user", user);
@@ -64,7 +73,15 @@ export const requireAuth: MiddlewareHandler<{
 }> = async (c, next) => {
   const user = c.get("user");
   if (!user) {
-    return c.json({ error: "Unauthorized" }, 401);
+    return c.json(
+      {
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "Authentication required",
+        },
+      },
+      401,
+    );
   }
   await next();
 };
@@ -78,10 +95,26 @@ export const requireRole = (
   return async (c, next) => {
     const user = c.get("user");
     if (!user) {
-      return c.json({ error: "Unauthorized" }, 401);
+      return c.json(
+        {
+          error: {
+            code: "UNAUTHENTICATED",
+            message: "Authentication required",
+          },
+        },
+        401,
+      );
     }
     if (!allowedRoles.includes(user.role)) {
-      return c.json({ error: "Forbidden" }, 403);
+      return c.json(
+        {
+          error: {
+            code: "FORBIDDEN",
+            message: "Insufficient permissions",
+          },
+        },
+        403,
+      );
     }
     await next();
   };
