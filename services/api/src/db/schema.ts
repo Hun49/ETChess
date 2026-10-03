@@ -124,6 +124,35 @@ export const auditLogs = sqliteTable("audit_logs", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
+export const friends = sqliteTable("friends", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  friendId: text("friend_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'declined' | 'blocked'
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const challenges = sqliteTable("challenges", {
+  id: text("id").primaryKey(),
+  challengerId: text("challenger_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  challengedId: text("challenged_id").references(() => user.id, { onDelete: "cascade" }),
+  timeControl: text("time_control").notNull(),
+  category: text("category").notNull(),
+  rated: integer("rated", { mode: "boolean" }).notNull().default(false),
+  preferredColor: text("preferred_color").notNull().default("random"), // 'white' | 'black' | 'random'
+  status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'declined' | 'expired' | 'canceled'
+  gameId: text("game_id"),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
 export type User = typeof user.$inferSelect;
 export type InsertUser = typeof user.$inferInsert;
 export type Session = typeof session.$inferSelect;
@@ -137,3 +166,7 @@ export type Report = typeof reports.$inferSelect;
 export type InsertReport = typeof reports.$inferInsert;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = typeof auditLogs.$inferInsert;
+export type Friend = typeof friends.$inferSelect;
+export type InsertFriend = typeof friends.$inferInsert;
+export type Challenge = typeof challenges.$inferSelect;
+export type InsertChallenge = typeof challenges.$inferInsert;

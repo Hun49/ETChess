@@ -7,6 +7,8 @@ import { globalErrorHandler, globalNotFoundHandler } from "./middleware/errorHan
 import { requestLoggerMiddleware } from "./middleware/logger";
 import { type HonoVariables, sessionMiddleware } from "./middleware/session";
 import { adminRoute } from "./routes/admin";
+import { challengesRoute } from "./routes/challenges";
+import { friendsRoute } from "./routes/friends";
 import { gamesRoute } from "./routes/games";
 import { guestRoute } from "./routes/guest";
 import { handleHealthCheck, handleReadyCheck, healthRoute } from "./routes/health";
@@ -84,6 +86,8 @@ const routes = app
   .route("/api/ws-ticket", ticketRoute)
   .route("/api/games", gamesRoute)
   .route("/api/users", usersRoute)
+  .route("/api/friends", friendsRoute)
+  .route("/api/challenges", challengesRoute)
   .route("/api/admin", adminRoute);
 
 // 9. WebSocket Proxy to GameSessionDO

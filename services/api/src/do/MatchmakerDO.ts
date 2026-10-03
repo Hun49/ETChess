@@ -335,6 +335,16 @@ export class MatchmakerDO extends DurableObject<Env> {
       return Response.json({ cleared: true });
     }
 
+    // 4. Internal User Notification Endpoint
+    if (url.pathname.endsWith("/notify-user") && request.method === "POST") {
+      const body = (await request.json()) as {
+        userId: string;
+        frame: ServerUserFrame;
+      };
+      this.sendToUser(body.userId, body.frame);
+      return Response.json({ success: true });
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 

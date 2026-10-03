@@ -114,6 +114,33 @@ CREATE TABLE IF NOT EXISTS \`audit_logs\` (
 	\`created_at\` integer NOT NULL,
 	FOREIGN KEY (\`admin_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE no action
 );
+
+CREATE TABLE IF NOT EXISTS \`friends\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`user_id\` text NOT NULL,
+	\`friend_id\` text NOT NULL,
+	\`status\` text DEFAULT 'pending' NOT NULL,
+	\`created_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	FOREIGN KEY (\`user_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (\`friend_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS \`challenges\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`challenger_id\` text NOT NULL,
+	\`challenged_id\` text,
+	\`time_control\` text NOT NULL,
+	\`category\` text NOT NULL,
+	\`rated\` integer DEFAULT false NOT NULL,
+	\`preferred_color\` text DEFAULT 'random' NOT NULL,
+	\`status\` text DEFAULT 'pending' NOT NULL,
+	\`game_id\` text,
+	\`expires_at\` integer NOT NULL,
+	\`created_at\` integer NOT NULL,
+	FOREIGN KEY (\`challenger_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (\`challenged_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);
 `;
 
 export async function applyTestSchema(db: D1Database): Promise<void> {
