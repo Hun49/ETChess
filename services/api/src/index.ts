@@ -13,6 +13,7 @@ import { gamesRoute } from "./routes/games";
 import { guestRoute } from "./routes/guest";
 import { handleHealthCheck, handleReadyCheck, healthRoute } from "./routes/health";
 import { metaRoute } from "./routes/meta";
+import { reportsRoute } from "./routes/reports";
 import { ticketRoute } from "./routes/tickets";
 import { usersRoute } from "./routes/users";
 import type { Env } from "./types";
@@ -88,6 +89,7 @@ const routes = app
   .route("/api/users", usersRoute)
   .route("/api/friends", friendsRoute)
   .route("/api/challenges", challengesRoute)
+  .route("/api/reports", reportsRoute)
   .route("/api/admin", adminRoute);
 
 // 9. WebSocket Proxy to GameSessionDO

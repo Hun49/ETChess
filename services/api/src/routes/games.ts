@@ -1,46 +1,158 @@
+import { buildPgn } from "@etchess/chess-core";
 import { zValidator } from "@hono/zod-validator";
-import { desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { z } from "zod";
 import * as schema from "../db/schema";
-import { type HonoVariables, requireAuth } from "../middleware/session";
+import type { HonoVariables } from "../middleware/session";
 import type { Env } from "../types";
 
 export const gamesRoute = new Hono<{
   Bindings: Env;
   Variables: HonoVariables;
 }>()
-  // List games for current user or recent games
+  // List games with optional filters (userId, category) and pagination
   .get(
     "/",
     zValidator(
       "query",
       z.object({
         userId: z.string().optional(),
+        category: z.enum(["bullet", "blitz", "rapid", "classical"]).optional(),
         limit: z.coerce.number().min(1).max(50).default(20),
         offset: z.coerce.number().min(0).default(0),
       }),
     ),
     async (c) => {
-      const { userId, limit, offset } = c.req.valid("query");
+      const { userId, category, limit, offset } = c.req.valid("query");
       const db = drizzle(c.env.DB, { schema });
 
-      const baseQuery = db.select().from(schema.games);
-      const results = userId
-        ? await baseQuery
-            .where(
-              or(eq(schema.games.whitePlayerId, userId), eq(schema.games.blackPlayerId, userId)),
-            )
-            .orderBy(desc(schema.games.startedAt))
-            .limit(limit)
-            .offset(offset)
-        : await baseQuery.orderBy(desc(schema.games.startedAt)).limit(limit).offset(offset);
-      return c.json({ games: results });
+      const conditions = [];
+      if (userId) {
+        conditions.push(
+          or(eq(schema.games.whitePlayerId, userId), eq(schema.games.blackPlayerId, userId)),
+        );
+      }
+      if (category) {
+        conditions.push(eq(schema.games.category, category));
+      }
+
+      const query = db.select().from(schema.games);
+      const rows =
+        conditions.length > 0
+          ? await query
+              .where(conditions.length === 1 ? conditions[0] : and(...conditions))
+              .orderBy(desc(schema.games.startedAt))
+              .limit(limit)
+              .offset(offset)
+          : await query.orderBy(desc(schema.games.startedAt)).limit(limit).offset(offset);
+
+      // Hydrate player profiles for returned games
+      const enriched = await Promise.all(
+        rows.map(async (g) => {
+          let whitePlayer = null;
+          let blackPlayer = null;
+
+          if (g.whitePlayerId) {
+            const [w] = await db
+              .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+              .from(schema.user)
+              .where(eq(schema.user.id, g.whitePlayerId));
+            whitePlayer = w || null;
+          }
+
+          if (g.blackPlayerId) {
+            const [b] = await db
+              .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+              .from(schema.user)
+              .where(eq(schema.user.id, g.blackPlayerId));
+            blackPlayer = b || null;
+          }
+
+          return {
+            ...g,
+            moves: JSON.parse(g.moves || "[]"),
+            whitePlayer,
+            blackPlayer,
+          };
+        }),
+      );
+
+      return c.json({ games: enriched });
     },
   )
 
-  // Get game details by ID
+  // Convenience route: List games for a specific user
+  .get(
+    "/user/:userId",
+    zValidator(
+      "query",
+      z.object({
+        category: z.enum(["bullet", "blitz", "rapid", "classical"]).optional(),
+        limit: z.coerce.number().min(1).max(50).default(20),
+        offset: z.coerce.number().min(0).default(0),
+      }),
+    ),
+    async (c) => {
+      const targetUserId = c.req.param("userId");
+      const { category, limit, offset } = c.req.valid("query");
+      const db = drizzle(c.env.DB, { schema });
+
+      const conditions = [
+        or(
+          eq(schema.games.whitePlayerId, targetUserId),
+          eq(schema.games.blackPlayerId, targetUserId),
+        ),
+      ];
+
+      if (category) {
+        conditions.push(eq(schema.games.category, category));
+      }
+
+      const rows = await db
+        .select()
+        .from(schema.games)
+        .where(and(...conditions))
+        .orderBy(desc(schema.games.startedAt))
+        .limit(limit)
+        .offset(offset);
+
+      const enriched = await Promise.all(
+        rows.map(async (g) => {
+          let whitePlayer = null;
+          let blackPlayer = null;
+
+          if (g.whitePlayerId) {
+            const [w] = await db
+              .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+              .from(schema.user)
+              .where(eq(schema.user.id, g.whitePlayerId));
+            whitePlayer = w || null;
+          }
+
+          if (g.blackPlayerId) {
+            const [b] = await db
+              .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+              .from(schema.user)
+              .where(eq(schema.user.id, g.blackPlayerId));
+            blackPlayer = b || null;
+          }
+
+          return {
+            ...g,
+            moves: JSON.parse(g.moves || "[]"),
+            whitePlayer,
+            blackPlayer,
+          };
+        }),
+      );
+
+      return c.json({ games: enriched });
+    },
+  )
+
+  // Get single game details by ID
   .get("/:id", async (c) => {
     const id = c.req.param("id");
     const db = drizzle(c.env.DB, { schema });
@@ -63,12 +175,18 @@ export const gamesRoute = new Hono<{
     let blackPlayer = null;
 
     if (game.whitePlayerId) {
-      const [w] = await db.select().from(schema.user).where(eq(schema.user.id, game.whitePlayerId));
-      whitePlayer = w ? { id: w.id, name: w.name, image: w.image } : null;
+      const [w] = await db
+        .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+        .from(schema.user)
+        .where(eq(schema.user.id, game.whitePlayerId));
+      whitePlayer = w || null;
     }
     if (game.blackPlayerId) {
-      const [b] = await db.select().from(schema.user).where(eq(schema.user.id, game.blackPlayerId));
-      blackPlayer = b ? { id: b.id, name: b.name, image: b.image } : null;
+      const [b] = await db
+        .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+        .from(schema.user)
+        .where(eq(schema.user.id, game.blackPlayerId));
+      blackPlayer = b || null;
     }
 
     return c.json({
@@ -81,53 +199,59 @@ export const gamesRoute = new Hono<{
     });
   })
 
-  // Export PGN
+  // Export raw PGN using standard chess-core buildPgn
   .get("/:id/pgn", async (c) => {
     const id = c.req.param("id");
     const db = drizzle(c.env.DB, { schema });
 
     const [game] = await db.select().from(schema.games).where(eq(schema.games.id, id));
     if (!game) {
-      return c.text("Game not found", 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Game not found",
+          },
+        },
+        404,
+      );
     }
 
     let whiteName = "Anonymous";
     let blackName = "Anonymous";
 
     if (game.whitePlayerId) {
-      const [w] = await db.select().from(schema.user).where(eq(schema.user.id, game.whitePlayerId));
+      const [w] = await db
+        .select({ name: schema.user.name })
+        .from(schema.user)
+        .where(eq(schema.user.id, game.whitePlayerId));
       if (w) whiteName = w.name;
     }
     if (game.blackPlayerId) {
-      const [b] = await db.select().from(schema.user).where(eq(schema.user.id, game.blackPlayerId));
+      const [b] = await db
+        .select({ name: schema.user.name })
+        .from(schema.user)
+        .where(eq(schema.user.id, game.blackPlayerId));
       if (b) blackName = b.name;
     }
 
     const dateStr = game.startedAt.toISOString().slice(0, 10).replace(/-/g, ".");
     const movesList: string[] = JSON.parse(game.moves || "[]");
 
-    let moveText = "";
-    for (let i = 0; i < movesList.length; i++) {
-      if (i % 2 === 0) {
-        moveText += `${Math.floor(i / 2) + 1}. `;
-      }
-      moveText += `${movesList[i]} `;
-    }
-    moveText += game.result;
-
-    const pgn = `[Event "ET Chess Online Match"]
-[Site "https://etchess.com"]
-[Date "${dateStr}"]
-[White "${whiteName}"]
-[Black "${blackName}"]
-[Result "${game.result}"]
-[WhiteElo "${Math.round(game.whiteRatingBefore ?? 1500)}"]
-[BlackElo "${Math.round(game.blackRatingBefore ?? 1500)}"]
-[TimeControl "${game.timeControl}"]
-[Termination "${game.termination}"]
-
-${moveText.trim()}
-`;
+    const pgn = buildPgn({
+      event: "ET Chess Online Match",
+      site: "https://etchess.com",
+      date: dateStr,
+      round: "1",
+      white: whiteName,
+      black: blackName,
+      result: (game.result as "1-0" | "0-1" | "1/2-1/2" | "*") || "*",
+      whiteElo: Math.round(game.whiteRatingBefore ?? 1500),
+      blackElo: Math.round(game.blackRatingBefore ?? 1500),
+      timeControl: game.timeControl,
+      termination: game.termination,
+      moves: movesList,
+    });
 
     return new Response(pgn, {
       headers: {
@@ -135,56 +259,4 @@ ${moveText.trim()}
         "Content-Disposition": `attachment; filename="etchess-${game.id}.pgn"`,
       },
     });
-  })
-
-  // Create custom / private game challenge
-  .post(
-    "/create",
-    requireAuth,
-    zValidator(
-      "json",
-      z.object({
-        timeControl: z
-          .enum(["1+0", "2+0", "3+0", "3+2", "5+0", "5+3", "10+0", "10+5", "15+10", "30+0"])
-          .default("3+2"),
-        color: z.enum(["white", "black", "random"]).default("random"),
-        rated: z.boolean().default(true),
-      }),
-    ),
-    async (c) => {
-      const user = c.get("user");
-      if (!user) {
-        return c.json({ error: "Unauthorized" }, 401);
-      }
-      const { timeControl, color, rated } = c.req.valid("json");
-
-      const gameId = crypto.randomUUID();
-      const assignedWhite = color === "random" ? Math.random() < 0.5 : color === "white";
-
-      const whiteUserId = assignedWhite ? user.id : "";
-      const whiteUserName = assignedWhite ? user.name : "";
-      const blackUserId = !assignedWhite ? user.id : "";
-      const blackUserName = !assignedWhite ? user.name : "";
-
-      const roomDO = c.env.GAME_ROOM_DO.get(c.env.GAME_ROOM_DO.idFromName(gameId));
-      await roomDO.fetch("http://internal/init", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gameId,
-          whiteUserId,
-          whiteUserName,
-          blackUserId,
-          blackUserName,
-          timeControl,
-          rated,
-        }),
-      });
-
-      return c.json({
-        gameId,
-        color: assignedWhite ? "white" : "black",
-        timeControl,
-      });
-    },
-  );
+  });

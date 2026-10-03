@@ -13,7 +13,7 @@ export const adminRoute = new Hono<{
 }>()
   .use("*", requireRole(["admin", "moderator"]))
 
-  // List moderation reports
+  // List moderation reports with reporter and reported player details
   .get(
     "/reports",
     zValidator(
@@ -21,10 +21,11 @@ export const adminRoute = new Hono<{
       z.object({
         status: z.enum(["pending", "resolved", "dismissed"]).default("pending"),
         limit: z.coerce.number().min(1).max(50).default(20),
+        offset: z.coerce.number().min(0).default(0),
       }),
     ),
     async (c) => {
-      const { status, limit } = c.req.valid("query");
+      const { status, limit, offset } = c.req.valid("query");
       const db = drizzle(c.env.DB, { schema });
 
       const reportsList = await db
@@ -32,9 +33,39 @@ export const adminRoute = new Hono<{
         .from(schema.reports)
         .where(eq(schema.reports.status, status))
         .orderBy(desc(schema.reports.createdAt))
-        .limit(limit);
+        .limit(limit)
+        .offset(offset);
 
-      return c.json({ reports: reportsList });
+      const enrichedReports = await Promise.all(
+        reportsList.map(async (rep) => {
+          let reporter = null;
+          let reported = null;
+
+          if (rep.reporterId) {
+            const [u] = await db
+              .select({ id: schema.user.id, name: schema.user.name })
+              .from(schema.user)
+              .where(eq(schema.user.id, rep.reporterId));
+            reporter = u || null;
+          }
+
+          if (rep.reportedId) {
+            const [u] = await db
+              .select({ id: schema.user.id, name: schema.user.name })
+              .from(schema.user)
+              .where(eq(schema.user.id, rep.reportedId));
+            reported = u || null;
+          }
+
+          return {
+            ...rep,
+            reporter,
+            reported,
+          };
+        }),
+      );
+
+      return c.json({ reports: enrichedReports });
     },
   )
 
@@ -53,13 +84,35 @@ export const adminRoute = new Hono<{
       const { status, notes } = c.req.valid("json");
       const admin = c.get("user");
       if (!admin) {
-        return c.json({ error: "Unauthorized" }, 401);
+        return c.json(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Authentication required",
+            },
+          },
+          401,
+        );
       }
       const db = drizzle(c.env.DB, { schema });
 
+      const [report] = await db.select().from(schema.reports).where(eq(schema.reports.id, id));
+
+      if (!report) {
+        return c.json(
+          {
+            error: {
+              code: "NOT_FOUND",
+              message: "Report not found",
+            },
+          },
+          404,
+        );
+      }
+
       await db
         .update(schema.reports)
-        .set({ status, details: notes })
+        .set({ status, details: notes ?? report.details })
         .where(eq(schema.reports.id, id));
 
       await db.insert(schema.auditLogs).values({
@@ -67,7 +120,7 @@ export const adminRoute = new Hono<{
         adminId: admin.id,
         targetId: id,
         action: `REPORT_${status.toUpperCase()}`,
-        details: notes,
+        details: notes || null,
         createdAt: new Date(),
       });
 
@@ -75,25 +128,60 @@ export const adminRoute = new Hono<{
     },
   )
 
-  // Ban user
+  // Ban user (Admin role only)
   .post(
     "/ban",
     requireRole(["admin"]),
     zValidator(
       "json",
       z.object({
-        userId: z.string(),
+        userId: z.string().min(1),
         durationDays: z.number().min(1).max(365).optional(), // permanent if omitted
-        reason: z.string(),
+        reason: z.string().min(1),
       }),
     ),
     async (c) => {
       const { userId, durationDays, reason } = c.req.valid("json");
       const admin = c.get("user");
       if (!admin) {
-        return c.json({ error: "Unauthorized" }, 401);
+        return c.json(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Authentication required",
+            },
+          },
+          401,
+        );
       }
+
+      if (userId === admin.id) {
+        return c.json(
+          {
+            error: {
+              code: "VALIDATION_FAILED",
+              message: "Cannot ban yourself",
+            },
+          },
+          400,
+        );
+      }
+
       const db = drizzle(c.env.DB, { schema });
+
+      const [targetUser] = await db.select().from(schema.user).where(eq(schema.user.id, userId));
+
+      if (!targetUser) {
+        return c.json(
+          {
+            error: {
+              code: "NOT_FOUND",
+              message: "Target user not found",
+            },
+          },
+          404,
+        );
+      }
 
       const banExpiresAt = durationDays
         ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000)
@@ -120,14 +208,14 @@ export const adminRoute = new Hono<{
     },
   )
 
-  // Unban user
+  // Unban user (Admin role only)
   .post(
     "/unban",
     requireRole(["admin"]),
     zValidator(
       "json",
       z.object({
-        userId: z.string(),
+        userId: z.string().min(1),
         reason: z.string().optional(),
       }),
     ),
@@ -135,9 +223,32 @@ export const adminRoute = new Hono<{
       const { userId, reason } = c.req.valid("json");
       const admin = c.get("user");
       if (!admin) {
-        return c.json({ error: "Unauthorized" }, 401);
+        return c.json(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Authentication required",
+            },
+          },
+          401,
+        );
       }
+
       const db = drizzle(c.env.DB, { schema });
+
+      const [targetUser] = await db.select().from(schema.user).where(eq(schema.user.id, userId));
+
+      if (!targetUser) {
+        return c.json(
+          {
+            error: {
+              code: "NOT_FOUND",
+              message: "Target user not found",
+            },
+          },
+          404,
+        );
+      }
 
       await db
         .update(schema.user)
@@ -160,15 +271,27 @@ export const adminRoute = new Hono<{
     },
   )
 
-  // Audit logs
-  .get("/audit-logs", async (c) => {
-    const db = drizzle(c.env.DB, { schema });
+  // Audit logs with pagination
+  .get(
+    "/audit-logs",
+    zValidator(
+      "query",
+      z.object({
+        limit: z.coerce.number().min(1).max(100).default(50),
+        offset: z.coerce.number().min(0).default(0),
+      }),
+    ),
+    async (c) => {
+      const { limit, offset } = c.req.valid("query");
+      const db = drizzle(c.env.DB, { schema });
 
-    const logs = await db
-      .select()
-      .from(schema.auditLogs)
-      .orderBy(desc(schema.auditLogs.createdAt))
-      .limit(50);
+      const logs = await db
+        .select()
+        .from(schema.auditLogs)
+        .orderBy(desc(schema.auditLogs.createdAt))
+        .limit(limit)
+        .offset(offset);
 
-    return c.json({ auditLogs: logs });
-  });
+      return c.json({ auditLogs: logs });
+    },
+  );
