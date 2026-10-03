@@ -1,4 +1,5 @@
 import type { AppType } from "@etchess/api";
+import { emailOTPClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { hc } from "hono/client";
 
@@ -6,6 +7,7 @@ const origin = typeof window !== "undefined" ? window.location.origin : "http://
 
 export const authClient = createAuthClient({
   baseURL: origin,
+  plugins: [emailOTPClient()],
 });
 
 export const { signIn, signUp, signOut, useSession } = authClient;

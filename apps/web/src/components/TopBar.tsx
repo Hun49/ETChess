@@ -3,6 +3,7 @@ import type React from "react";
 import { useState } from "react";
 import { useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 export const TopBar: React.FC = () => {
   const { mode, latencyMs, isSoundMuted, toggleSound, openModal, setActiveView } = useGameStore();
@@ -84,8 +85,13 @@ export const TopBar: React.FC = () => {
             onClick={() => setActiveView("profile")}
             className="flex items-center gap-2 p-1 rounded-xl hover:bg-[#0e1e22] transition-colors"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#18363c] text-white font-bold text-xs border border-[#234e57]">
+            <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-[#18363c] text-white font-bold text-xs border border-[#234e57]">
               {userName.charAt(0).toUpperCase()}
+              {session.user.emailVerified && (
+                <span className="absolute -top-1 -right-1">
+                  <VerifiedBadge size="sm" />
+                </span>
+              )}
             </div>
           </button>
         ) : (

@@ -1,11 +1,16 @@
 import {
+  AlertCircle,
   ArrowLeft,
   Award,
   Calendar,
+  Check,
+  CheckCircle2,
   ChevronRight,
   Edit3,
   Flame,
   Globe,
+  Loader2,
+  Mail,
   Medal,
   Settings,
   Shield,
@@ -19,11 +24,72 @@ import {
 } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
+import { VerifiedBadge } from "../components/VerifiedBadge";
+import { authClient, useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
 
 export const ProfileView: React.FC = () => {
   const { setActiveView } = useGameStore();
+  const { data: session } = useSession();
   const [timeframe, setTimeframe] = useState<"30d" | "3m" | "1y" | "all">("30d");
+
+  const userName = session?.user?.name || "AlexRook";
+  const userEmail = session?.user?.email;
+  const isEmailVerified = !!session?.user?.emailVerified;
+
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpSuccess, setOtpSuccess] = useState<string | null>(null);
+
+  const handleSendOtp = async () => {
+    if (!userEmail) return;
+    setOtpError(null);
+    setOtpSuccess(null);
+    setOtpLoading(true);
+    try {
+      const res = await authClient.emailOtp.sendVerificationOtp({
+        email: userEmail,
+        type: "email-verification",
+      });
+      if (res.error) {
+        setOtpError(res.error.message || "Failed to send code. Please try again.");
+      } else {
+        setOtpSent(true);
+        setOtpSuccess(`Verification code sent to ${userEmail}! Check your inbox.`);
+      }
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : "Failed to send verification OTP");
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userEmail || !otpCode.trim()) return;
+    setOtpError(null);
+    setOtpLoading(true);
+    try {
+      const res = await authClient.emailOtp.verifyEmail({
+        email: userEmail,
+        otp: otpCode.trim(),
+      });
+      if (res.error) {
+        setOtpError(res.error.message || "Invalid or expired verification code.");
+      } else {
+        setOtpSuccess("Email verified successfully! You now have the Verified Player badge.");
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      }
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setOtpLoading(false);
+    }
+  };
 
   // Chart coordinate points for SVG line chart
   const chartData = [
@@ -91,22 +157,41 @@ export const ProfileView: React.FC = () => {
 
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
             {/* Avatar with online dot */}
+            {/* Avatar with online dot */}
             <div className="relative">
-              <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-[#00e699]/30 to-[#0e1e22] border-2 border-[#00e699]/40 text-2xl font-black text-[#00e699] shadow-lg shadow-[#00e699]/10">
-                AR
-              </div>
+              {session?.user?.image ? (
+                <img
+                  src={session.user.image}
+                  alt={userName}
+                  className="h-20 w-20 rounded-2xl object-cover border-2 border-[#00e699]/40 shadow-lg shadow-[#00e699]/10"
+                />
+              ) : (
+                <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-[#00e699]/30 to-[#0e1e22] border-2 border-[#00e699]/40 text-2xl font-black text-[#00e699] shadow-lg shadow-[#00e699]/10">
+                  {userName.slice(0, 2).toUpperCase()}
+                </div>
+              )}
               <span className="absolute bottom-1 right-1 h-3.5 w-3.5 rounded-full border-2 border-[#0b171a] bg-[#00e699]" />
             </div>
 
             {/* Info details */}
             <div className="flex-1 text-center sm:text-left space-y-1.5">
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                <h2 className="text-2xl font-black text-white">AlexRook</h2>
+                <h2 className="text-2xl font-black text-white">{userName}</h2>
+                {isEmailVerified ? (
+                  <VerifiedBadge size="md" showLabel />
+                ) : (
+                  <span className="rounded-md border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-400">
+                    Unverified
+                  </span>
+                )}
                 <span className="rounded-md border border-[#00e699]/30 bg-[#00e699]/15 px-2 py-0.5 text-[11px] font-bold text-[#00e699]">
                   PRO
                 </span>
               </div>
-              <p className="text-xs font-mono text-[#8ba3a8]">@alexrook • Member since Jan 2024</p>
+              <p className="text-xs font-mono text-[#8ba3a8]">
+                {userEmail || `@${userName.toLowerCase().replace(/\s+/g, "")}`} • Member since Jan
+                2024
+              </p>
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 pt-1 text-xs text-[#8ba3a8]">
                 <div className="flex items-center gap-1">
                   <Flame className="h-3.5 w-3.5 text-orange-400" />
@@ -136,6 +221,102 @@ export const ProfileView: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Progressive Verification Card (only shown when unverified user is logged in) */}
+        {!isEmailVerified && userEmail && (
+          <div className="rounded-3xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-[#0b171a] to-[#0b171a] p-6 shadow-xl relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400 border border-amber-500/30 mt-0.5">
+                  <Shield className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-white">
+                      Claim Your Verified Player Badge
+                    </h3>
+                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                      Unverified
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#8ba3a8] mt-1 max-w-xl">
+                    Verify your email to earn the mint checkmark badge, qualify for global rating
+                    leaderboards, and enter official tournaments.
+                  </p>
+                </div>
+              </div>
+
+              {!otpSent ? (
+                <button
+                  type="button"
+                  onClick={handleSendOtp}
+                  disabled={otpLoading}
+                  className="shrink-0 flex items-center gap-2 rounded-xl bg-[#00e699] px-4 py-2.5 text-xs font-black text-[#081214] shadow-md shadow-[#00e699]/20 hover:bg-[#00c885] transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {otpLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Mail className="h-4 w-4" />
+                  )}
+                  <span>Send Verification Code</span>
+                </button>
+              ) : null}
+            </div>
+
+            {/* OTP Input Form */}
+            {otpSent && (
+              <form
+                onSubmit={handleVerifyOtp}
+                className="mt-4 pt-4 border-t border-[#14282c] flex flex-col sm:flex-row items-stretch sm:items-center gap-3"
+              >
+                <div className="flex-1 max-w-xs">
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                    placeholder="Enter 6-digit code"
+                    className="w-full tracking-widest text-center font-mono text-base font-bold rounded-xl border border-[#162e33] bg-[#0e1e22] px-4 py-2 text-white placeholder-[#587277] focus:border-[#00e699] focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={otpLoading || otpCode.length < 6}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-[#00e699] px-5 py-2.5 text-xs font-black text-[#081214] hover:bg-[#00c885] disabled:opacity-40 transition-all cursor-pointer"
+                >
+                  {otpLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  <span>Verify Code</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendOtp}
+                  disabled={otpLoading}
+                  className="rounded-xl border border-[#162e33] bg-[#0e1e22] px-3.5 py-2 text-xs font-semibold text-[#8ba3a8] hover:text-white cursor-pointer"
+                >
+                  Resend Code
+                </button>
+              </form>
+            )}
+
+            {/* Error / Success Feedback */}
+            {otpError && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-red-400">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                <span>{otpError}</span>
+              </div>
+            )}
+            {otpSuccess && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-[#00e699]">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                <span>{otpSuccess}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Rating Category Cards (Bullet, Blitz, Rapid) */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

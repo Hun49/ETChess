@@ -15,6 +15,7 @@ import type React from "react";
 import { useState } from "react";
 import { useSession } from "../lib/api";
 import { type AppView, useGameStore } from "../store/gameStore";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 export const Sidebar: React.FC = () => {
   const { activeView, setActiveView, openModal } = useGameStore();
@@ -217,7 +218,10 @@ export const Sidebar: React.FC = () => {
               <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[#00e699] ring-2 ring-[#081214]" />
             </div>
             <div className="text-left overflow-hidden">
-              <div className="text-xs font-bold text-white truncate">{userName}</div>
+              <div className="flex items-center gap-1.5 text-xs font-bold text-white truncate">
+                <span className="truncate">{userName}</span>
+                {session.user.emailVerified && <VerifiedBadge size="sm" />}
+              </div>
               <div className="text-[10px] text-[#00e699] font-medium flex items-center gap-1">
                 <span>Online</span>
               </div>

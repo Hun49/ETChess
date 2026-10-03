@@ -1,6 +1,8 @@
 {
   "extends": "@etchess/config/tsconfig.base.json",
   "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
     "types": ["@cloudflare/workers-types/latest", "@cloudflare/vitest-plugin/types"]
   },
   "include": ["src/**/*", "test/**/*", "drizzle.config.ts"]
