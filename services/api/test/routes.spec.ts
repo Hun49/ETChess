@@ -16,6 +16,24 @@ describe("API Routes", () => {
     expect(typeof data.timestamp).toBe("number");
   });
 
+  it("GET /api/meta returns server version, protocol version, and product rules", async () => {
+    const res = await app.fetch(new Request("http://localhost/api/meta"), env);
+    expect(res.status).toBe(200);
+
+    const data = (await res.json()) as {
+      serverVersion: string;
+      minProtocolVersion: number;
+      rules: { FIRST_MOVE_DEADLINE_MS: number; DISCONNECT_GRACE_MS: number };
+      timeControls: Record<string, unknown>;
+    };
+
+    expect(data.serverVersion).toBe("0.1.0");
+    expect(data.minProtocolVersion).toBe(1);
+    expect(data.rules.FIRST_MOVE_DEADLINE_MS).toBe(30000);
+    expect(data.rules.DISCONNECT_GRACE_MS).toBe(60000);
+    expect(data.timeControls["3+2"]).toBeDefined();
+  });
+
   it("GET /api/games returns empty games list initially", async () => {
     const res = await app.fetch(new Request("http://localhost/api/games"), env);
     expect(res.status).toBe(200);

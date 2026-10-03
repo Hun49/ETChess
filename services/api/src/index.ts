@@ -6,6 +6,7 @@ import { MatchmakerDO } from "./do/MatchmakerDO";
 import { type HonoVariables, sessionMiddleware } from "./middleware/session";
 import { adminRoute } from "./routes/admin";
 import { gamesRoute } from "./routes/games";
+import { metaRoute } from "./routes/meta";
 import { usersRoute } from "./routes/users";
 import type { Env } from "./types";
 
@@ -58,6 +59,7 @@ app.get("/health", (c) => {
 
 // Chained Routes for Hono RPC
 const routes = app
+  .route("/api/meta", metaRoute)
   .route("/api/games", gamesRoute)
   .route("/api/users", usersRoute)
   .route("/api/admin", adminRoute);

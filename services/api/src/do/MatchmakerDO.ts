@@ -162,7 +162,7 @@ export class MatchmakerDO extends DurableObject<Env> {
             userId: attachment.userId,
             userName: attachment.userName,
             rating: attachment.rating,
-            timeControl,
+            timeControl: (timeControl || "3+2") as TimeControlKey,
             rated,
             joinedAt: now,
             ws,

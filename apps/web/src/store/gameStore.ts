@@ -466,7 +466,7 @@ export const useGameStore = create<GameState>((set, get) => ({
             clearInterval(timer);
             connectToOnlineGame(
               frame.payload.gameId,
-              frame.payload.color,
+              frame.payload.color ?? frame.payload.assignedColor ?? "white",
               frame.payload.opponent,
               set,
               get,
@@ -837,7 +837,7 @@ function connectToOnlineGame(
         moves: payload.moves,
         whiteMs: payload.whiteMs,
         blackMs: payload.blackMs,
-        lastMoveTimestamp: payload.lastMoveTimestamp,
+        lastMoveTimestamp: payload.lastMoveTimestamp ?? 0,
         whiteConnected: payload.whiteConnected,
         blackConnected: payload.blackConnected,
         status: payload.status,
