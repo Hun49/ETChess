@@ -30,7 +30,22 @@ app.use(
 // Better Auth API Handlers
 app.all("/api/auth/*", async (c) => {
   const auth = createAuth(c.env);
-  return auth.handler(c.req.raw);
+  try {
+    return await auth.handler(c.req.raw);
+  } catch (error: unknown) {
+    if (error && typeof error === "object") {
+      const err = error as Record<string, unknown>;
+      const statusCode =
+        typeof err.statusCode === "number"
+          ? err.statusCode
+          : typeof err.status === "number"
+            ? err.status
+            : 400;
+      const body = err.body || { message: err.message || "Authentication error" };
+      return c.json(body, statusCode as 400);
+    }
+    throw error;
+  }
 });
 
 // Session Middleware on API routes

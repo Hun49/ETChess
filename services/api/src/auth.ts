@@ -19,6 +19,9 @@ export function createAuth(env: Env) {
       "http://localhost:8787",
       ...(env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : []),
     ],
+    onAPIError: {
+      throw: false,
+    },
     emailAndPassword: {
       enabled: true,
     },
