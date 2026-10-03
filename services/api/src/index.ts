@@ -8,8 +8,10 @@ import { requestLoggerMiddleware } from "./middleware/logger";
 import { type HonoVariables, sessionMiddleware } from "./middleware/session";
 import { adminRoute } from "./routes/admin";
 import { gamesRoute } from "./routes/games";
+import { guestRoute } from "./routes/guest";
 import { handleHealthCheck, handleReadyCheck, healthRoute } from "./routes/health";
 import { metaRoute } from "./routes/meta";
+import { ticketRoute } from "./routes/tickets";
 import { usersRoute } from "./routes/users";
 import type { Env } from "./types";
 
@@ -44,7 +46,10 @@ app.get("/health", handleHealthCheck);
 app.get("/ready", handleReadyCheck);
 app.route("/health", healthRoute);
 
-// 5. Better Auth API Handlers
+// 5. Guest Session Endpoint (before general Better Auth handler)
+app.route("/api/auth/guest", guestRoute);
+
+// 6. Better Auth API Handlers
 app.all("/api/auth/*", async (c) => {
   const auth = createAuth(c.env);
   try {
@@ -70,17 +75,18 @@ app.all("/api/auth/*", async (c) => {
   }
 });
 
-// 6. Session Middleware on API routes
+// 7. Session Middleware on API routes
 app.use("/api/*", sessionMiddleware);
 
-// 7. Chained Routes for Hono RPC
+// 8. Chained Routes for Hono RPC
 const routes = app
   .route("/api/meta", metaRoute)
+  .route("/api/ws-ticket", ticketRoute)
   .route("/api/games", gamesRoute)
   .route("/api/users", usersRoute)
   .route("/api/admin", adminRoute);
 
-// 8. WebSocket Proxy to GameRoomDO
+// 9. WebSocket Proxy to GameRoomDO
 app.get("/ws/game/:roomId", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(
@@ -99,7 +105,7 @@ app.get("/ws/game/:roomId", async (c) => {
   return stub.fetch(c.req.raw);
 });
 
-// 9. WebSocket Proxy to MatchmakerDO
+// 10. WebSocket Proxy to MatchmakerDO
 app.get("/ws/matchmaker", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(

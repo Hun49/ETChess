@@ -48,7 +48,15 @@ export const gamesRoute = new Hono<{
     const [game] = await db.select().from(schema.games).where(eq(schema.games.id, id));
 
     if (!game) {
-      return c.json({ error: "Game not found" }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Game not found",
+          },
+        },
+        404,
+      );
     }
 
     let whitePlayer = null;

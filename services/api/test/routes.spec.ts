@@ -55,8 +55,9 @@ describe("API Routes", () => {
     const res = await app.fetch(new Request("http://localhost/api/games/non-existent-id"), env);
     expect(res.status).toBe(404);
 
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toBe("Game not found");
+    const data = (await res.json()) as { error: { code: string; message: string } };
+    expect(data.error.code).toBe("NOT_FOUND");
+    expect(data.error.message).toBe("Game not found");
   });
 
   it("GET /api/users/non-existent returns 404", async () => {
@@ -66,7 +67,8 @@ describe("API Routes", () => {
     );
     expect(res.status).toBe(404);
 
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toBe("User not found");
+    const data = (await res.json()) as { error: { code: string; message: string } };
+    expect(data.error.code).toBe("NOT_FOUND");
+    expect(data.error.message).toBe("User not found");
   });
 });

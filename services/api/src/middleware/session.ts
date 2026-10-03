@@ -1,5 +1,8 @@
-import type { Context, MiddlewareHandler } from "hono";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
+import type { MiddlewareHandler } from "hono";
 import { createAuth } from "../auth";
+import * as schema from "../db/schema";
 import type { Env } from "../types";
 
 export type SessionUser = {
@@ -30,9 +33,50 @@ export const sessionMiddleware: MiddlewareHandler<{
   Variables: HonoVariables;
 }> = async (c, next) => {
   const auth = createAuth(c.env);
-  const sessionResult = await auth.api.getSession({
+  let sessionResult = await auth.api.getSession({
     headers: c.req.raw.headers,
   });
+
+  // Fallback: check session table in D1 for guest sessions or direct Bearer tokens
+  if (!sessionResult) {
+    const authHeader = c.req.header("authorization");
+    const cookieHeader = c.req.header("cookie");
+    let token: string | null = null;
+
+    if (authHeader?.toLowerCase().startsWith("bearer ")) {
+      token = authHeader.slice(7).trim();
+    } else if (cookieHeader) {
+      const match = cookieHeader.match(/better-auth\.session_token=([^;]+)/);
+      if (match) {
+        // Strip out any trailing path/attributes if passed in raw header
+        const rawToken = match[1].trim();
+        token = decodeURIComponent(rawToken.split(";")[0].split(".")[0]);
+      }
+    }
+
+    if (token) {
+      try {
+        const db = drizzle(c.env.DB, { schema });
+        const [sess] = await db
+          .select()
+          .from(schema.session)
+          .where(eq(schema.session.token, token));
+
+        if (sess && new Date(sess.expiresAt).getTime() > Date.now()) {
+          const [u] = await db.select().from(schema.user).where(eq(schema.user.id, sess.userId));
+
+          if (u) {
+            sessionResult = {
+              user: u,
+              session: sess,
+            } as unknown as NonNullable<typeof sessionResult>;
+          }
+        }
+      } catch {
+        // Ignored, proceed unauthenticated
+      }
+    }
+  }
 
   if (sessionResult) {
     const user = sessionResult.user as unknown as SessionUser;

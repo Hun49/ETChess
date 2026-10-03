@@ -15,7 +15,15 @@ export const usersRoute = new Hono<{
   .get("/me", requireAuth, async (c) => {
     const user = c.get("user");
     if (!user) {
-      return c.json({ error: "Unauthorized" }, 401);
+      return c.json(
+        {
+          error: {
+            code: "UNAUTHENTICATED",
+            message: "Authentication required",
+          },
+        },
+        401,
+      );
     }
     const db = drizzle(c.env.DB, { schema });
 
@@ -49,6 +57,73 @@ export const usersRoute = new Hono<{
       },
     });
   })
+
+  // Update authenticated user profile
+  .patch(
+    "/me",
+    requireAuth,
+    zValidator(
+      "json",
+      z.object({
+        name: z.string().min(2).max(32).optional(),
+        image: z.string().url().nullable().optional(),
+      }),
+    ),
+    async (c) => {
+      const user = c.get("user");
+      if (!user) {
+        return c.json(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Authentication required",
+            },
+          },
+          401,
+        );
+      }
+      const data = c.req.valid("json");
+      const db = drizzle(c.env.DB, { schema });
+
+      const updateValues: Partial<schema.InsertUser> = {
+        updatedAt: new Date(),
+      };
+      if (data.name !== undefined) updateValues.name = data.name;
+      if (data.image !== undefined) updateValues.image = data.image;
+
+      await db.update(schema.user).set(updateValues).where(eq(schema.user.id, user.id));
+
+      const [updatedUser] = await db.select().from(schema.user).where(eq(schema.user.id, user.id));
+
+      const [ratingsRow] = await db
+        .select()
+        .from(schema.ratings)
+        .where(eq(schema.ratings.userId, user.id));
+
+      return c.json({
+        user: {
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          image: updatedUser.image,
+          ratings: ratingsRow
+            ? {
+                bullet: Math.round(ratingsRow.bulletRating),
+                blitz: Math.round(ratingsRow.blitzRating),
+                rapid: Math.round(ratingsRow.rapidRating),
+                classical: Math.round(ratingsRow.classicalRating),
+              }
+            : {
+                bullet: 1500,
+                blitz: 1500,
+                rapid: 1500,
+                classical: 1500,
+              },
+        },
+      });
+    },
+  )
 
   // Leaderboard by category
   .get(
@@ -151,7 +226,15 @@ export const usersRoute = new Hono<{
       .where(eq(schema.user.id, id));
 
     if (!u) {
-      return c.json({ error: "User not found" }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "User not found",
+          },
+        },
+        404,
+      );
     }
 
     const [ratingsRow] = await db

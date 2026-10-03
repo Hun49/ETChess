@@ -59,6 +59,7 @@ export const PRODUCT_RULES = {
 
   /** RULE-12: Single-use WebSocket ticket lifetime. */
   WS_TICKET_TTL_MS: 30_000,
+  WS_TICKET_LIFETIME_SEC: 30,
 
   /** RULE-12: Maximum time after socket open to send AUTH frame before 4001 disconnect. */
   FIRST_FRAME_AUTH_TIMEOUT_MS: 5_000,
