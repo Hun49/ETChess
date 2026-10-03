@@ -106,7 +106,24 @@ app.get("/ws/game/:gameId", async (c) => {
   return stub.fetch(c.req.raw);
 });
 
-// 10. WebSocket Proxy to MatchmakerDO
+// 10. WebSocket Proxy to MatchmakerDO (/ws/user and legacy /ws/matchmaker)
+app.get("/ws/user", async (c) => {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+    return c.json(
+      {
+        error: {
+          code: "UPGRADE_REQUIRED",
+          message: "Expected WebSocket upgrade",
+        },
+      },
+      426,
+    );
+  }
+  const id = c.env.MATCHMAKER_DO.idFromName("global");
+  const stub = c.env.MATCHMAKER_DO.get(id);
+  return stub.fetch(c.req.raw);
+});
+
 app.get("/ws/matchmaker", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(

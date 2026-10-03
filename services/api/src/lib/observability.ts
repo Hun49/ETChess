@@ -93,4 +93,8 @@ export const MetricsCollector = {
   matchmakerWaitTime(waitMs: number, tags?: { timeControl?: string; rated?: boolean }): void {
     timing("matchmaker_wait_ms", waitMs, tags);
   },
+
+  matchmakerWaitMs(waitMs: number, tags?: { timeControl?: string; rated?: boolean }): void {
+    timing("matchmaker_wait_ms", waitMs, tags);
+  },
 };
