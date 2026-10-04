@@ -1,6 +1,6 @@
 import { buildPgn } from "@etchess/chess-core";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -48,36 +48,31 @@ export const gamesRoute = new Hono<{
               .offset(offset)
           : await query.orderBy(desc(schema.games.startedAt)).limit(limit).offset(offset);
 
-      // Hydrate player profiles for returned games
-      const enriched = await Promise.all(
-        rows.map(async (g) => {
-          let whitePlayer = null;
-          let blackPlayer = null;
+      // Hydrate player profiles with a single batched query (eliminates N+1) (H9)
+      const userIds = [
+        ...new Set(
+          rows
+            .flatMap((g) => [g.whitePlayerId, g.blackPlayerId])
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
 
-          if (g.whitePlayerId) {
-            const [w] = await db
+      const users =
+        userIds.length > 0
+          ? await db
               .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
               .from(schema.user)
-              .where(eq(schema.user.id, g.whitePlayerId));
-            whitePlayer = w || null;
-          }
+              .where(inArray(schema.user.id, userIds))
+          : [];
 
-          if (g.blackPlayerId) {
-            const [b] = await db
-              .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
-              .from(schema.user)
-              .where(eq(schema.user.id, g.blackPlayerId));
-            blackPlayer = b || null;
-          }
+      const userMap = new Map(users.map((u) => [u.id, u]));
 
-          return {
-            ...g,
-            moves: JSON.parse(g.moves || "[]"),
-            whitePlayer,
-            blackPlayer,
-          };
-        }),
-      );
+      const enriched = rows.map((g) => ({
+        ...g,
+        moves: JSON.parse(g.moves || "[]"),
+        whitePlayer: g.whitePlayerId ? (userMap.get(g.whitePlayerId) ?? null) : null,
+        blackPlayer: g.blackPlayerId ? (userMap.get(g.blackPlayerId) ?? null) : null,
+      }));
 
       return c.json({ games: enriched });
     },
@@ -118,35 +113,31 @@ export const gamesRoute = new Hono<{
         .limit(limit)
         .offset(offset);
 
-      const enriched = await Promise.all(
-        rows.map(async (g) => {
-          let whitePlayer = null;
-          let blackPlayer = null;
+      // Hydrate player profiles with a single batched query (eliminates N+1) (H9)
+      const userIds = [
+        ...new Set(
+          rows
+            .flatMap((g) => [g.whitePlayerId, g.blackPlayerId])
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
 
-          if (g.whitePlayerId) {
-            const [w] = await db
+      const users =
+        userIds.length > 0
+          ? await db
               .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
               .from(schema.user)
-              .where(eq(schema.user.id, g.whitePlayerId));
-            whitePlayer = w || null;
-          }
+              .where(inArray(schema.user.id, userIds))
+          : [];
 
-          if (g.blackPlayerId) {
-            const [b] = await db
-              .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
-              .from(schema.user)
-              .where(eq(schema.user.id, g.blackPlayerId));
-            blackPlayer = b || null;
-          }
+      const userMap = new Map(users.map((u) => [u.id, u]));
 
-          return {
-            ...g,
-            moves: JSON.parse(g.moves || "[]"),
-            whitePlayer,
-            blackPlayer,
-          };
-        }),
-      );
+      const enriched = rows.map((g) => ({
+        ...g,
+        moves: JSON.parse(g.moves || "[]"),
+        whitePlayer: g.whitePlayerId ? (userMap.get(g.whitePlayerId) ?? null) : null,
+        blackPlayer: g.blackPlayerId ? (userMap.get(g.blackPlayerId) ?? null) : null,
+      }));
 
       return c.json({ games: enriched });
     },

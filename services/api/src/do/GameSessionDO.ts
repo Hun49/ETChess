@@ -48,6 +48,8 @@ export interface PlayerSessionState {
   vol?: number;
   connected: boolean;
   disconnectedAt?: number | null;
+  rttMs?: number;
+  lastHeartbeatAt?: number;
 }
 
 export interface StoredGameSessionState {
@@ -103,14 +105,24 @@ interface SocketAttachment {
   userId: string;
   userName: string;
   role: "white" | "black" | "spectator";
+  userRole?: string;
   authenticated: boolean;
   authTimeoutTimer?: number;
+  lastHeartbeatAt?: number;
+  measuredRttMs?: number;
+  windowStartMs?: number;
+  messageCountInWindow?: number;
 }
 
 export class GameSessionDO extends DurableObject<Env> {
   private state: StoredGameSessionState | null = null;
   private timers: StoredTimer[] = [];
-  private replayGuard = new TicketReplayGuard();
+  private replayGuard: TicketReplayGuard;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.replayGuard = new TicketReplayGuard(ctx.storage);
+  }
 
   private async loadState(): Promise<StoredGameSessionState | null> {
     if (!this.state) {
@@ -404,6 +416,34 @@ export class GameSessionDO extends DurableObject<Env> {
     const attachment = ws.deserializeAttachment() as SocketAttachment | null;
     if (!attachment) return;
 
+    // 1. Frame size cap: max 16KB per WebSocket frame (H7)
+    const msgLen = typeof message === "string" ? message.length : message.byteLength;
+    if (msgLen > 16384) {
+      ws.close(1009, "Frame size exceeds 16KB limit");
+      return;
+    }
+
+    // 2. Per-connection message rate limiter: max 25 messages/second (H7)
+    const now = Date.now();
+    const windowStart = attachment.windowStartMs ?? now;
+    if (now - windowStart < 1000) {
+      attachment.messageCountInWindow = (attachment.messageCountInWindow ?? 0) + 1;
+      if (attachment.messageCountInWindow > 25) {
+        this.send(ws, {
+          v: PROTOCOL_VERSION,
+          type: "ERROR",
+          code: "RATE_LIMITED",
+          message: "WebSocket message rate limit exceeded (max 25/sec)",
+          serverTime: now,
+        });
+        ws.close(4029, "Rate limit exceeded");
+        return;
+      }
+    } else {
+      attachment.windowStartMs = now;
+      attachment.messageCountInWindow = 1;
+    }
+
     const parsed = parseClientGameFrame(message);
     if (!parsed.success) {
       this.send(ws, {
@@ -476,6 +516,8 @@ export class GameSessionDO extends DurableObject<Env> {
 
       case "HEARTBEAT_PING":
       case "PING": {
+        attachment.lastHeartbeatAt = now;
+
         const seq =
           "payload" in frame &&
           frame.payload &&
@@ -485,10 +527,22 @@ export class GameSessionDO extends DurableObject<Env> {
             : "seq" in frame
               ? (frame as { seq?: number }).seq
               : undefined;
+
+        if (attachment.role === "white" || attachment.role === "black") {
+          const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
+          player.lastHeartbeatAt = now;
+          // Calculate server-measured RTT when client passes timestamp as clientSeq (H4)
+          if (seq && seq > now - 10000 && seq <= now + 1000) {
+            const measuredRtt = Math.max(0, now - seq);
+            player.rttMs = measuredRtt;
+            attachment.measuredRttMs = measuredRtt;
+          }
+        }
+
         this.send(ws, {
           v: PROTOCOL_VERSION,
           type: "HEARTBEAT_PONG",
-          serverTime: Date.now(),
+          serverTime: now,
           payload: { clientSeq: seq },
         });
         break;
@@ -534,7 +588,7 @@ export class GameSessionDO extends DurableObject<Env> {
       return;
     }
 
-    // Replay protection: single-use ticket check
+    // Replay protection: single-use ticket check (survives DO eviction via storage)
     if (!this.replayGuard.consume(jti, exp)) {
       ws.close(4001, "Ticket has already been consumed");
       return;
@@ -548,10 +602,29 @@ export class GameSessionDO extends DurableObject<Env> {
       role = "black";
     }
 
+    // RULE: One socket per player (close old socket with code 4004) (H5)
+    if (role === "white" || role === "black") {
+      for (const existingWs of this.ctx.getWebSockets()) {
+        if (existingWs !== ws) {
+          try {
+            const existingAtt = existingWs.deserializeAttachment() as SocketAttachment | null;
+            if (existingAtt?.authenticated && existingAtt.role === role) {
+              existingWs.close(4004, "Superseded by new session");
+            }
+          } catch {
+            // Already closed
+          }
+        }
+      }
+    }
+
+    const now = Date.now();
     attachment.userId = userId;
     attachment.userName = userName;
     attachment.role = role;
+    attachment.userRole = verification.payload.userRole;
     attachment.authenticated = true;
+    attachment.lastHeartbeatAt = now;
     ws.serializeAttachment(attachment);
 
     // If active player connected, update presence and cancel disconnect grace timer
@@ -560,6 +633,7 @@ export class GameSessionDO extends DurableObject<Env> {
       const wasDisconnected = !player.connected;
       player.connected = true;
       player.disconnectedAt = null;
+      player.lastHeartbeatAt = now;
 
       this.removeTimer((t) => t.kind === "DISCONNECT_GRACE" && t.role === role);
 
@@ -663,6 +737,11 @@ export class GameSessionDO extends DurableObject<Env> {
     const now = Date.now();
     const { san, snapshot } = moveValidation;
 
+    const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
+    const rtt = player.rttMs ?? attachment.measuredRttMs;
+    player.lastHeartbeatAt = now;
+    attachment.lastHeartbeatAt = now;
+
     // 4. Clock calculation with lag credit (RULE-04) and first-move hold (RULE-01)
     const clockResult = calculateClockAfterMove(
       {
@@ -675,6 +754,7 @@ export class GameSessionDO extends DurableObject<Env> {
         incrementMs: state.incrementMs,
         ply: state.ply,
         lagCreditCapMs: PRODUCT_RULES.LAG_CREDIT_CAP_MS,
+        serverMeasuredRttMs: rtt,
       },
       now,
     );
@@ -1211,6 +1291,34 @@ export class GameSessionDO extends DurableObject<Env> {
     const threshold = Math.max(now, minDueAt);
     const dueTimers = this.timers.filter((t) => t.dueAt <= threshold);
 
+    // Silent network drop detection via heartbeat timeout (30 seconds) (H5)
+    if (state.status === "active") {
+      for (const role of ["white", "black"] as const) {
+        const player = role === "white" ? state.whitePlayer : state.blackPlayer;
+        if (player.connected && player.lastHeartbeatAt && now - player.lastHeartbeatAt > 30000) {
+          player.connected = false;
+          player.disconnectedAt = now;
+          this.addTimer({
+            kind: "DISCONNECT_GRACE",
+            dueAt: now + PRODUCT_RULES.DISCONNECT_GRACE_MS,
+            ply: state.ply,
+            version: state.version,
+            role,
+          });
+          this.broadcast({
+            v: PROTOCOL_VERSION,
+            type: "OPPONENT_PRESENCE",
+            serverTime: now,
+            payload: {
+              role,
+              status: "disconnected",
+              gracePeriodRemainingMs: PRODUCT_RULES.DISCONNECT_GRACE_MS,
+            },
+          });
+        }
+      }
+    }
+
     for (const timer of dueTimers) {
       MetricsCollector.alarmsFired(timer.kind);
 
@@ -1266,7 +1374,15 @@ export class GameSessionDO extends DurableObject<Env> {
         }
 
         case "AUTO_CLOSE": {
-          // Clean up completed session
+          // Clean up completed session state and sockets (M3)
+          for (const s of this.ctx.getWebSockets()) {
+            try {
+              s.close(1000, "Game session completed");
+            } catch {
+              // ignore
+            }
+          }
+          await this.ctx.storage.deleteAll();
           break;
         }
       }
@@ -1286,6 +1402,21 @@ export class GameSessionDO extends DurableObject<Env> {
     if (!state || state.status !== "active") return;
 
     if (attachment.role === "white" || attachment.role === "black") {
+      // RULE: One socket per player. Verify no other active connection exists for this role before marking disconnected (H5)
+      const hasOtherActiveSocket = this.ctx.getWebSockets().some((s) => {
+        if (s === ws) return false;
+        try {
+          const att = s.deserializeAttachment() as SocketAttachment | null;
+          return att?.authenticated && att?.role === attachment.role;
+        } catch {
+          return false;
+        }
+      });
+
+      if (hasOtherActiveSocket) {
+        return; // Player is still actively connected via another socket!
+      }
+
       const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
       player.connected = false;
       player.disconnectedAt = Date.now();

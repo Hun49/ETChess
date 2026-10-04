@@ -48,50 +48,91 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
   let targetCategory: RatingCategory = reqCategory || "blitz";
 
   if (scope === "game" && gameId) {
-    // Verify game existence in D1
-    const [game] = await db
-      .select({
-        whitePlayerId: schema.games.whitePlayerId,
-        blackPlayerId: schema.games.blackPlayerId,
-        category: schema.games.category,
-      })
-      .from(schema.games)
-      .where(eq(schema.games.id, gameId));
+    let gameFound = false;
 
-    if (!game) {
-      return c.json(
-        {
-          error: {
-            code: "GAME_NOT_FOUND",
-            message: "Game session does not exist",
-          },
-        },
-        404,
-      );
+    // Check live Durable Object session first
+    const ns = c.env.GAME_SESSION_DO || c.env.GAME_ROOM_DO;
+    if (ns) {
+      try {
+        const sessionDO = ns.get(ns.idFromName(gameId));
+        const doRes = await sessionDO.fetch("http://internal/state");
+        if (doRes.ok) {
+          const doState = (await doRes.json()) as {
+            category: RatingCategory;
+            whitePlayer: { userId: string };
+            blackPlayer: { userId: string };
+          };
+          gameFound = true;
+          targetCategory = doState.category;
+          if (doState.whitePlayer.userId === user.id) {
+            role = "white";
+          } else if (doState.blackPlayer.userId === user.id) {
+            role = "black";
+          } else {
+            if (user.role === "guest") {
+              return c.json(
+                {
+                  error: {
+                    code: "FORBIDDEN",
+                    message: "Guest accounts are not permitted to spectate games",
+                  },
+                },
+                403,
+              );
+            }
+            role = "spectator";
+          }
+        }
+      } catch {
+        // Fallback to D1 check
+      }
     }
 
-    if (game.category) {
-      targetCategory = game.category as RatingCategory;
-    }
+    // Fallback: check completed game in D1
+    if (!gameFound) {
+      const [game] = await db
+        .select({
+          whitePlayerId: schema.games.whitePlayerId,
+          blackPlayerId: schema.games.blackPlayerId,
+          category: schema.games.category,
+        })
+        .from(schema.games)
+        .where(eq(schema.games.id, gameId));
 
-    if (game.whitePlayerId === user.id) {
-      role = "white";
-    } else if (game.blackPlayerId === user.id) {
-      role = "black";
-    } else {
-      // Spectator policy: guests are not permitted to spectate games
-      if (user.role === "guest") {
+      if (!game) {
         return c.json(
           {
             error: {
-              code: "FORBIDDEN",
-              message: "Guest accounts are not permitted to spectate games",
+              code: "NOT_FOUND",
+              message: "Game session does not exist",
             },
           },
-          403,
+          404,
         );
       }
-      role = "spectator";
+
+      if (game.category) {
+        targetCategory = game.category as RatingCategory;
+      }
+
+      if (game.whitePlayerId === user.id) {
+        role = "white";
+      } else if (game.blackPlayerId === user.id) {
+        role = "black";
+      } else {
+        if (user.role === "guest") {
+          return c.json(
+            {
+              error: {
+                code: "FORBIDDEN",
+                message: "Guest accounts are not permitted to spectate games",
+              },
+            },
+            403,
+          );
+        }
+        role = "spectator";
+      }
     }
   }
 
@@ -108,6 +149,7 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
       scope,
       gameId,
       role,
+      userRole: user.role,
     },
     secret,
   );

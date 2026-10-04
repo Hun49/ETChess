@@ -40,12 +40,21 @@ interface UserSocketAttachment {
   userId?: string;
   userName?: string;
   rating?: number;
+  userRole?: string;
   authenticated: boolean;
+  windowStartMs?: number;
+  messageCountInWindow?: number;
 }
 
 export class MatchmakerDO extends DurableObject<Env> {
   private queue: QueuedPlayer[] | null = null;
-  private replayGuard = new TicketReplayGuard();
+  private replayGuard: TicketReplayGuard;
+  private activePlayerGames = new Map<string, string>(); // userId -> gameId
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.replayGuard = new TicketReplayGuard(ctx.storage);
+  }
 
   private async loadQueue(): Promise<QueuedPlayer[]> {
     if (!this.queue) {
@@ -144,8 +153,9 @@ export class MatchmakerDO extends DurableObject<Env> {
           ),
         );
       return rows.length;
-    } catch {
-      return 0;
+    } catch (err) {
+      console.error("D1 error querying recent rated games:", err);
+      return Number.POSITIVE_INFINITY; // Fail safe: block pairing if D1 query fails
     }
   }
 
@@ -223,7 +233,7 @@ export class MatchmakerDO extends DurableObject<Env> {
     try {
       const ns = this.env.GAME_SESSION_DO || this.env.GAME_ROOM_DO;
       const sessionStub = ns.get(ns.idFromName(gameId));
-      await sessionStub.fetch("http://internal/init", {
+      const initRes = await sessionStub.fetch("http://internal/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -242,9 +252,36 @@ export class MatchmakerDO extends DurableObject<Env> {
           rated: white.rated,
         }),
       });
+
+      if (!initRes || !initRes.ok) {
+        throw new Error(`GameSessionDO initialization failed with status: ${initRes?.status}`);
+      }
     } catch (err) {
       console.error("Failed to pre-initialize GameSessionDO:", err);
+      this.sendToUser(p1.userId, {
+        v: PROTOCOL_VERSION,
+        type: "ERROR",
+        serverTime: Date.now(),
+        payload: {
+          code: "GAME_INIT_FAILED",
+          message: "Failed to initialize game session. Please try again.",
+        },
+      });
+      this.sendToUser(p2.userId, {
+        v: PROTOCOL_VERSION,
+        type: "ERROR",
+        serverTime: Date.now(),
+        payload: {
+          code: "GAME_INIT_FAILED",
+          message: "Failed to initialize game session. Please try again.",
+        },
+      });
+      return;
     }
+
+    // Register active game lock for both players (H10)
+    this.activePlayerGames.set(p1.userId, gameId);
+    this.activePlayerGames.set(p2.userId, gameId);
 
     const now = Date.now();
 
@@ -351,6 +388,7 @@ export class MatchmakerDO extends DurableObject<Env> {
     // 3. Clear Queue Endpoint (For integration testing)
     if (url.pathname.endsWith("/clear") && request.method === "POST") {
       this.queue = [];
+      this.activePlayerGames.clear();
       await this.persistQueue();
       return Response.json({ cleared: true });
     }
@@ -371,6 +409,36 @@ export class MatchmakerDO extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const attachment = ws.deserializeAttachment() as UserSocketAttachment | null;
     if (!attachment) return;
+
+    // 1. Frame size cap: max 16KB per WebSocket frame (H7)
+    const msgLen = typeof message === "string" ? message.length : message.byteLength;
+    if (msgLen > 16384) {
+      ws.close(1009, "Frame size exceeds 16KB limit");
+      return;
+    }
+
+    // 2. Per-connection message rate limiter: max 25 messages/second (H7)
+    const now = Date.now();
+    const windowStart = attachment.windowStartMs ?? now;
+    if (now - windowStart < 1000) {
+      attachment.messageCountInWindow = (attachment.messageCountInWindow ?? 0) + 1;
+      if (attachment.messageCountInWindow > 25) {
+        this.send(ws, {
+          v: PROTOCOL_VERSION,
+          type: "ERROR",
+          serverTime: now,
+          payload: {
+            code: "RATE_LIMITED",
+            message: "WebSocket message rate limit exceeded",
+          },
+        });
+        ws.close(4029, "Rate limit exceeded");
+        return;
+      }
+    } else {
+      attachment.windowStartMs = now;
+      attachment.messageCountInWindow = 1;
+    }
 
     const parsed = parseClientUserFrame(message);
     if (!parsed.success) {
@@ -414,6 +482,60 @@ export class MatchmakerDO extends DurableObject<Env> {
         ) as TimeControlKey;
 
         const rated = !!payload.rated;
+
+        // Disallow guest accounts from joining rated queues (H8)
+        if (rated && attachment.userRole === "guest") {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            serverTime: Date.now(),
+            payload: {
+              code: "FORBIDDEN",
+              message: "Guest accounts cannot join rated queues. Please sign in.",
+            },
+          });
+          return;
+        }
+
+        // Enforce active game lock: prevent multiple concurrent live games (H10)
+        if (attachment.userId && this.activePlayerGames.has(attachment.userId)) {
+          const existingGameId = this.activePlayerGames.get(attachment.userId);
+          const ns = this.env.GAME_SESSION_DO || this.env.GAME_ROOM_DO;
+          if (ns && existingGameId) {
+            try {
+              const sessionDO = ns.get(ns.idFromName(existingGameId));
+              const stateRes = await sessionDO.fetch("http://internal/state");
+              if (stateRes.ok) {
+                const sessionState = (await stateRes.json()) as {
+                  status: string;
+                  ply: number;
+                  whitePlayer?: { userId: string; connected: boolean };
+                  blackPlayer?: { userId: string; connected: boolean };
+                };
+                const isConnected =
+                  sessionState.whitePlayer?.userId === attachment.userId
+                    ? sessionState.whitePlayer?.connected
+                    : sessionState.blackPlayer?.connected;
+                if (sessionState.status === "active" && (sessionState.ply > 0 || isConnected)) {
+                  this.send(ws, {
+                    v: PROTOCOL_VERSION,
+                    type: "ERROR",
+                    serverTime: Date.now(),
+                    payload: {
+                      code: "ALREADY_IN_GAME",
+                      message: "You already have an active game session in progress.",
+                    },
+                  });
+                  return;
+                }
+              }
+            } catch {
+              // Session not found or finished, allow clean queueing
+            }
+          }
+          this.activePlayerGames.delete(attachment.userId);
+        }
+
         const category = getRatingCategory(timeControlId);
 
         const queue = await this.loadQueue();
@@ -555,6 +677,7 @@ export class MatchmakerDO extends DurableObject<Env> {
       userId: payload.userId,
       userName: payload.userName,
       rating: payload.rating,
+      userRole: payload.userRole,
       authenticated: true,
     };
 

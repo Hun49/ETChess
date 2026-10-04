@@ -58,6 +58,19 @@ challengesRoute.post("/", zValidator("json", CreateChallengeSchema), async (c) =
     );
   }
 
+  // 1b. Disallow guests from creating rated challenges (H8)
+  if (isRated && user.role === "guest") {
+    return c.json(
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "Guest accounts cannot create rated challenges. Please sign in.",
+        },
+      },
+      403,
+    );
+  }
+
   const db = drizzle(c.env.DB, { schema });
   const now = new Date();
 
@@ -254,6 +267,19 @@ challengesRoute.post("/:id/accept", async (c) => {
     return c.json(
       { error: { code: "VALIDATION_FAILED", message: "Cannot accept your own challenge" } },
       400,
+    );
+  }
+
+  // 1b. Disallow guests from accepting rated challenges (H8)
+  if (challenge.rated && user.role === "guest") {
+    return c.json(
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "Guest accounts cannot accept rated challenges. Please sign in.",
+        },
+      },
+      403,
     );
   }
 

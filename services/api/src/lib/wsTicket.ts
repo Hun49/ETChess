@@ -7,6 +7,7 @@ export interface WsTicketPayload {
   scope: "game" | "user";
   gameId?: string;
   role?: "white" | "black" | "spectator";
+  userRole?: string;
   exp: number; // Unix timestamp in ms
   jti: string; // Unique ticket UUID for single-use replay protection
 }
@@ -134,9 +135,15 @@ export async function verifyWsTicket(ticket: string, secret: string): Promise<Ve
 /**
  * Replay protection store helper for Durable Objects.
  * Tracks consumed JTIs and purges expired entries.
+ * Supports persistent DO storage to survive in-memory evictions.
  */
 export class TicketReplayGuard {
   private consumedJtis = new Map<string, number>(); // jti -> expiresAt
+  private storage?: DurableObjectStorage;
+
+  constructor(storage?: DurableObjectStorage) {
+    this.storage = storage;
+  }
 
   /**
    * Consumes a ticket. Returns false if already used (replay attack).
@@ -144,9 +151,12 @@ export class TicketReplayGuard {
   consume(jti: string, expiresAt: number): boolean {
     this.cleanup();
     if (this.consumedJtis.has(jti)) {
-      return false; // Replayed ticket
+      return false; // Replayed ticket in memory
     }
     this.consumedJtis.set(jti, expiresAt);
+    if (this.storage) {
+      void this.storage.put(`jti:${jti}`, expiresAt).catch(() => {});
+    }
     return true;
   }
 
