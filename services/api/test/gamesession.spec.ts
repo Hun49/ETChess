@@ -275,15 +275,18 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
     blackWs.send(
       JSON.stringify({ type: "MOVE_INTENT", payload: { from: "b8", to: "c6", expectedPly: 3 } }),
     );
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 40));
 
     // White offers draw
     whiteWs.send(JSON.stringify({ type: "DRAW_OFFER", payload: {} }));
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 50));
 
     // Black accepts draw
     blackWs.send(JSON.stringify({ type: "DRAW_RESPONSE", payload: { accept: true } }));
-    await new Promise((r) => setTimeout(r, 120));
+    for (let i = 0; i < 20; i++) {
+      if (whiteMsgs.some((m) => m.type === "GAME_TERMINATED")) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
     const terminated = whiteMsgs.find((m) => m.type === "GAME_TERMINATED");
     expect(terminated).toBeDefined();

@@ -27,6 +27,7 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { MetricsCollector } from "../lib/observability";
+import { getWsTicketSecret } from "../lib/secrets";
 import { TicketReplayGuard, verifyWsTicket } from "../lib/wsTicket";
 import type { Env } from "../types";
 
@@ -152,6 +153,10 @@ export class GameSessionDO extends DurableObject<Env> {
     const json = JSON.stringify(frame);
     for (const ws of this.ctx.getWebSockets()) {
       try {
+        const att = ws.deserializeAttachment() as SocketAttachment | null;
+        if (!att || !att.authenticated) {
+          continue; // Critical C3: Never broadcast game traffic to unauthenticated sockets!
+        }
         ws.send(json);
       } catch {
         // Socket dead
@@ -292,11 +297,14 @@ export class GameSessionDO extends DurableObject<Env> {
     }
 
     // 3. WebSocket Connection Upgrade
-    if (request.headers.get("Upgrade") === "websocket") {
+    if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       const state = await this.loadState();
       if (!state) {
         return new Response("Game session not initialized", { status: 404 });
       }
+
+      const url = new URL(request.url);
+      const queryTicket = url.searchParams.get("ticket");
 
       const webSocketPair = new WebSocketPair();
       const [client, server] = Object.values(webSocketPair);
@@ -310,6 +318,23 @@ export class GameSessionDO extends DurableObject<Env> {
 
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment(attachment);
+
+      if (queryTicket) {
+        // Authenticate immediately if ticket is passed in query
+        await this.handleAuthFrame(server, attachment, queryTicket);
+      } else {
+        // Enforce 5-second authentication deadline on unauthenticated sockets (C3)
+        setTimeout(() => {
+          try {
+            const currentAtt = server.deserializeAttachment() as SocketAttachment | null;
+            if (currentAtt && !currentAtt.authenticated) {
+              server.close(4001, "Authentication timeout (5s)");
+            }
+          } catch {
+            // Already closed
+          }
+        }, 5000);
+      }
 
       return new Response(null, {
         status: 101,
@@ -424,8 +449,7 @@ export class GameSessionDO extends DurableObject<Env> {
     const state = await this.loadState();
     if (!state) return;
 
-    const secret =
-      this.env.BETTER_AUTH_SECRET || "development_better_auth_secret_key_minimum_32_characters";
+    const secret = getWsTicketSecret(this.env);
     const verification = await verifyWsTicket(ticket, secret);
 
     if (!verification.valid) {
@@ -440,10 +464,17 @@ export class GameSessionDO extends DurableObject<Env> {
       return;
     }
 
-    const { userId, userName, jti, exp, gameId } = verification.payload;
+    const { userId, userName, jti, exp, gameId, scope } = verification.payload;
 
-    // Check game scope
-    if (gameId && gameId !== state.gameId) {
+    // Strictly enforce game scope and game ID match (C3 & H6)
+    if (scope !== "game" || !gameId || gameId !== state.gameId) {
+      this.send(ws, {
+        v: PROTOCOL_VERSION,
+        type: "ERROR",
+        code: "UNAUTHORIZED",
+        message: "Ticket scope must be 'game' with matching gameId",
+        serverTime: Date.now(),
+      });
       ws.close(4001, "Ticket gameId does not match current game session");
       return;
     }

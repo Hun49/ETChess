@@ -18,6 +18,7 @@ import { and, eq, gt, isNotNull, or } from "drizzle-orm";
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { MetricsCollector } from "../lib/observability";
+import { getWsTicketSecret } from "../lib/secrets";
 import { TicketReplayGuard, verifyWsTicket } from "../lib/wsTicket";
 import type { Env } from "../types";
 
@@ -305,6 +306,18 @@ export class MatchmakerDO extends DurableObject<Env> {
       // If ticket provided in query, verify immediately
       if (ticketQuery) {
         await this.authenticateSocket(server, ticketQuery);
+      } else {
+        // Enforce 5-second authentication deadline on unauthenticated sockets (C3)
+        setTimeout(() => {
+          try {
+            const cur = server.deserializeAttachment() as UserSocketAttachment | null;
+            if (cur && !cur.authenticated) {
+              server.close(WS_CLOSE_CODES.UNAUTHORIZED, "Authentication timeout (5s)");
+            }
+          } catch {
+            // Already closed
+          }
+        }, 5000);
       }
 
       return new Response(null, {
@@ -495,12 +508,16 @@ export class MatchmakerDO extends DurableObject<Env> {
   }
 
   private async authenticateSocket(ws: WebSocket, ticket: string): Promise<void> {
-    const secret =
-      this.env.BETTER_AUTH_SECRET || "development_better_auth_secret_key_minimum_32_characters";
+    const secret = getWsTicketSecret(this.env);
     const verification = await verifyWsTicket(ticket, secret);
 
     if (!verification.valid) {
       ws.close(WS_CLOSE_CODES.UNAUTHORIZED, verification.reason || "Invalid ticket");
+      return;
+    }
+
+    if (verification.payload.scope !== "user") {
+      ws.close(WS_CLOSE_CODES.UNAUTHORIZED, "Invalid ticket scope: expected 'user'");
       return;
     }
 

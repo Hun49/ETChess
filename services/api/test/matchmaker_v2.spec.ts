@@ -10,7 +10,9 @@ import { applyTestSchema } from "./helpers";
 
 describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
   const secret =
-    env.BETTER_AUTH_SECRET || "development_better_auth_secret_key_minimum_32_characters";
+    env.WS_TICKET_SECRET ||
+    env.BETTER_AUTH_SECRET ||
+    "development_better_auth_secret_key_minimum_32_characters";
 
   beforeAll(async () => {
     await applyTestSchema(env.DB);
@@ -74,7 +76,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
 
     // 1. Authenticate with ticket
     ws.send(JSON.stringify({ type: "AUTH", payload: { ticket } }));
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 60));
 
     // 2. Join 3+2 blitz queue
     ws.send(
@@ -83,7 +85,10 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
         payload: { timeControlId: "3+2", rated: true },
       }),
     );
-    await new Promise((r) => setTimeout(r, 40));
+    for (let i = 0; i < 20; i++) {
+      if (messages.some((m) => m.type === "QUEUE_JOINED")) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
     const joinedMsg = messages.find((m) => m.type === "QUEUE_JOINED");
     expect(joinedMsg).toBeDefined();
@@ -147,7 +152,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
 
     ws1.send(JSON.stringify({ type: "AUTH", payload: { ticket: t1 } }));
     ws2.send(JSON.stringify({ type: "AUTH", payload: { ticket: t2 } }));
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 60));
 
     // Player 1 joins queue
     ws1.send(
@@ -156,7 +161,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
         payload: { timeControlId: "5+0", rated: true },
       }),
     );
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 60));
 
     // Player 2 joins queue (diff = 20 <= 100)
     ws2.send(
@@ -165,7 +170,14 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
         payload: { timeControlId: "5+0", rated: true },
       }),
     );
-    await new Promise((r) => setTimeout(r, 150));
+    for (let i = 0; i < 25; i++) {
+      if (
+        msgs1.some((m) => m.type === "MATCH_FOUND") &&
+        msgs2.some((m) => m.type === "MATCH_FOUND")
+      )
+        break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
     // Both receive MATCH_FOUND
     const match1 = msgs1.find((m) => m.type === "MATCH_FOUND");
@@ -249,7 +261,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
 
     ws1.send(JSON.stringify({ type: "AUTH", payload: { ticket: t1 } }));
     ws2.send(JSON.stringify({ type: "AUTH", payload: { ticket: t2 } }));
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 60));
 
     // Both join rated 3+2 queue
     ws1.send(
@@ -258,7 +270,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
         payload: { timeControlId: "3+2", rated: true },
       }),
     );
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 60));
 
     ws2.send(
       JSON.stringify({

@@ -41,10 +41,7 @@
     }
   ],
   "vars": {
-    "BETTER_AUTH_SECRET": "development_better_auth_secret_key_minimum_32_characters",
     "BETTER_AUTH_URL": "http://localhost:8787",
-    "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com",
-    "GOOGLE_CLIENT_SECRET": "",
-    "RESEND_API_KEY": ""
+    "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com"
   }
 }

@@ -11,6 +11,14 @@ describe("Better Auth & Google OAuth Integration", () => {
   });
 
   it("POST /api/auth/sign-in/social generates Google OAuth authorization URL", async () => {
+    const authEnv = {
+      ...env,
+      GOOGLE_CLIENT_ID:
+        env.GOOGLE_CLIENT_ID ||
+        "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com",
+      GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET || "dummy_google_client_secret_for_tests",
+    };
+
     const res = await app.fetch(
       new Request("http://localhost:8787/api/auth/sign-in/social", {
         method: "POST",
@@ -23,7 +31,7 @@ describe("Better Auth & Google OAuth Integration", () => {
           callbackURL: "http://localhost:3000",
         }),
       }),
-      env,
+      authEnv,
     );
 
     expect(res.status).toBe(200);

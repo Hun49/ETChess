@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { createAuth } from "./auth";
 import { GameSessionDO } from "./do/GameSessionDO";
 import { MatchmakerDO } from "./do/MatchmakerDO";
+import { isAllowedOrigin } from "./lib/cors";
 import { globalErrorHandler, globalNotFoundHandler } from "./middleware/errorHandler";
 import { requestLoggerMiddleware } from "./middleware/logger";
 import { type HonoVariables, sessionMiddleware } from "./middleware/session";
@@ -28,11 +29,14 @@ const app = new Hono<{
 // 1. Request ID and Structured Logging (First middleware in pipeline)
 app.use("*", requestLoggerMiddleware);
 
-// 2. Global CORS Middleware
+// 2. Global CORS Middleware with strict allowlist (C4)
 app.use(
   "*",
   cors({
-    origin: (origin) => origin || "*",
+    origin: (origin, c) => {
+      if (!origin) return null;
+      return isAllowedOrigin(origin, c.env) ? origin : null;
+    },
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "Cookie", "X-Request-ID"],
     exposeHeaders: ["X-Request-ID"],
@@ -94,6 +98,19 @@ const routes = app
 
 // 9. WebSocket Proxy to GameSessionDO
 app.get("/ws/game/:gameId", async (c) => {
+  const origin = c.req.header("origin");
+  if (origin && !isAllowedOrigin(origin, c.env)) {
+    return c.json(
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "Cross-origin WebSocket connections from this origin are not allowed",
+        },
+      },
+      403,
+    );
+  }
+
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(
       {
@@ -114,6 +131,19 @@ app.get("/ws/game/:gameId", async (c) => {
 
 // 10. WebSocket Proxy to MatchmakerDO (/ws/user and legacy /ws/matchmaker)
 app.get("/ws/user", async (c) => {
+  const origin = c.req.header("origin");
+  if (origin && !isAllowedOrigin(origin, c.env)) {
+    return c.json(
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "Cross-origin WebSocket connections from this origin are not allowed",
+        },
+      },
+      403,
+    );
+  }
+
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(
       {
@@ -131,6 +161,19 @@ app.get("/ws/user", async (c) => {
 });
 
 app.get("/ws/matchmaker", async (c) => {
+  const origin = c.req.header("origin");
+  if (origin && !isAllowedOrigin(origin, c.env)) {
+    return c.json(
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "Cross-origin WebSocket connections from this origin are not allowed",
+        },
+      },
+      403,
+    );
+  }
+
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(
       {

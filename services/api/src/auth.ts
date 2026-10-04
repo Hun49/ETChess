@@ -3,22 +3,23 @@ import { betterAuth } from "better-auth";
 import { emailOTP } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./db/schema";
+import { getAllowedOrigins } from "./lib/cors";
+import { getAuthSecret } from "./lib/secrets";
 import type { Env } from "./types";
 
 export function createAuth(env: Env) {
   const db = drizzle(env.DB, { schema });
+  const secret = getAuthSecret(env);
+  const trustedOrigins = getAllowedOrigins(env);
+
   return betterAuth({
     database: drizzleAdapter(db, {
       provider: "sqlite",
       schema,
     }),
-    secret: env.BETTER_AUTH_SECRET,
+    secret,
     baseURL: env.BETTER_AUTH_URL || "http://localhost:8787",
-    trustedOrigins: [
-      "http://localhost:3000",
-      "http://localhost:8787",
-      ...(env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : []),
-    ],
+    trustedOrigins,
     onAPIError: {
       throw: false,
     },
@@ -74,20 +75,34 @@ export function createAuth(env: Env) {
         role: {
           type: "string",
           defaultValue: "user",
+          input: false,
         },
         isBanned: {
           type: "boolean",
           defaultValue: false,
+          input: false,
         },
         banExpiresAt: {
           type: "date",
           required: false,
+          input: false,
         },
       },
     },
     databaseHooks: {
       user: {
         create: {
+          before: async (user) => {
+            // Defense-in-depth: enforce server-only fields unconditionally on registration
+            return {
+              data: {
+                ...user,
+                role: "user",
+                isBanned: false,
+                banExpiresAt: null,
+              },
+            };
+          },
           after: async (createdUser) => {
             await db
               .insert(schema.ratings)

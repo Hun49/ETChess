@@ -15,7 +15,8 @@ out/
 
 # Cloudflare Workers & Wrangler
 .wrangler/
-.dev.vars
+.dev.vars*
+!.dev.vars.example
 
 # Environment files
 .env
@@ -29,8 +30,15 @@ out/
 *.p8
 *.p12
 *.key
+*.keystore
+*.pem
 *.mobileprovision
 *.orig.*
+google-services.json
+GoogleService-Info.plist
+*.apk
+*.aab
+*.tsbuildinfo
 
 # Logs
 *.log

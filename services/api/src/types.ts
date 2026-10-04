@@ -7,6 +7,8 @@ declare global {
       MATCHMAKER_DO: DurableObjectNamespace;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
+      WS_TICKET_SECRET?: string;
+      ALLOWED_ORIGINS?: string;
       GOOGLE_CLIENT_ID?: string;
       GOOGLE_CLIENT_SECRET?: string;
       RESEND_API_KEY?: string;
