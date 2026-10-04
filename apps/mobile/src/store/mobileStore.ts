@@ -1,6 +1,9 @@
 import { TIME_CONTROLS, type TimeControlId } from "@etchess/types";
 import { Chess } from "chess.js";
 import { create } from "zustand";
+import { api } from "../services/apiClient";
+import { haptics } from "../services/haptics";
+import { realtime } from "../services/realtimeClient";
 import type {
   GameMode,
   MatchHistoryItem,
@@ -29,6 +32,8 @@ interface MobileStoreState {
   activeView: MobileView;
   viewHistory: MobileView[];
   user: UserProfile;
+  onlineStatus: "connected" | "connecting" | "disconnected";
+  hapticsEnabled: boolean;
 
   // Matchmaking
   isSearching: boolean;
@@ -48,6 +53,8 @@ interface MobileStoreState {
   navigate: (view: MobileView) => void;
   goBack: () => void;
   setUser: (user: Partial<UserProfile>) => void;
+  setHapticsEnabled: (enabled: boolean) => void;
+  syncUserSession: () => Promise<void>;
   startMatchmaking: (timeControlId: TimeControlId, rated: boolean) => void;
   cancelMatchmaking: () => void;
   startBotGame: (
@@ -150,6 +157,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     activeView: "home",
     viewHistory: ["home"],
     user: DEFAULT_USER,
+    onlineStatus: "disconnected",
+    hapticsEnabled: true,
 
     isSearching: false,
     searchTimeControlId: null,
@@ -160,6 +169,49 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     botDifficulty: 4,
 
     history: INITIAL_HISTORY,
+
+    setHapticsEnabled: (enabled: boolean) => {
+      haptics.setEnabled(enabled);
+      set({ hapticsEnabled: enabled });
+    },
+
+    syncUserSession: async () => {
+      try {
+        set({ onlineStatus: "connecting" });
+        const res = await api.getMe();
+        if (res?.user) {
+          set({
+            user: {
+              id: res.user.id,
+              name: res.user.name,
+              avatar: res.user.image || undefined,
+              ratings: res.user.ratings,
+              isGuest: !!res.user.isGuest,
+            },
+            onlineStatus: "connected",
+          });
+        }
+      } catch {
+        // If not authenticated, attempt guest session
+        try {
+          const guestRes = await api.createGuestSession();
+          if (guestRes?.user) {
+            set({
+              user: {
+                id: guestRes.user.id,
+                name: guestRes.user.name,
+                avatar: guestRes.user.image || undefined,
+                ratings: guestRes.user.ratings,
+                isGuest: true,
+              },
+              onlineStatus: "connected",
+            });
+          }
+        } catch {
+          set({ onlineStatus: "disconnected" });
+        }
+      }
+    },
 
     setActiveTab: (tab: MobileTab) => {
       let targetView: MobileView = "home";
@@ -380,6 +432,29 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
         const updatedMoves = [...game.moves, move.san];
 
+        // Tactile feedback
+        if (move.captured) {
+          haptics.capture();
+        } else if (isCheck) {
+          haptics.check();
+        } else {
+          haptics.move();
+        }
+
+        // If online mode, dispatch move to server
+        if (game.mode === "online") {
+          realtime.sendGameMessage({
+            v: 1,
+            type: "MOVE",
+            payload: {
+              from,
+              to,
+              promotion: (promotion as "q" | "r" | "b" | "n") || undefined,
+              expectedPly: updatedMoves.length,
+            },
+          });
+        }
+
         set({
           game: {
             ...game,
@@ -485,6 +560,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const isLoss = winner !== "draw" && winner !== game.playerColor;
       const resultStr = isWin ? "win" : isLoss ? "loss" : "draw";
       const ratingDelta = game.isRated ? (isWin ? +16 : isLoss ? -14 : 0) : 0;
+
+      // Haptic feedback on game outcome
+      haptics.gameOver(isWin);
 
       const newHistoryItem: MatchHistoryItem = {
         id: game.gameId,
