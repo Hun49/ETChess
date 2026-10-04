@@ -12,6 +12,8 @@ export type TimeControlKey =
   | "15+10"
   | "30+0";
 
+export type TimeControlId = TimeControlKey;
+
 export interface TimeControlConfig {
   key: TimeControlKey;
   initialSeconds: number;

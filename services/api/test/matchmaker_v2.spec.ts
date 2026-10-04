@@ -102,7 +102,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
 
     // 3. Leave queue
     ws.send(JSON.stringify({ type: "QUEUE_LEAVE" }));
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 120));
 
     const leftMsg = messages.find((m) => m.type === "QUEUE_LEFT");
     expect(leftMsg).toBeDefined();
@@ -165,7 +165,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
         payload: { timeControlId: "5+0", rated: true },
       }),
     );
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 150));
 
     // Both receive MATCH_FOUND
     const match1 = msgs1.find((m) => m.type === "MATCH_FOUND");

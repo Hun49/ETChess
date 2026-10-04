@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "ET-Chess",
+    "slug": "et-chess",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#081214"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.etchess.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#081214"
+      },
+      "package": "com.etchess.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

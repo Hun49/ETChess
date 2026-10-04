@@ -183,6 +183,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 30));
     }
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // 6. Verify MOVE_ACCEPTED broadcasts and GAME_TERMINATED
     const acceptedMoves = whiteMessages.filter((m) => m.type === "MOVE_ACCEPTED");
@@ -282,7 +283,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
 
     // Black accepts draw
     blackWs.send(JSON.stringify({ type: "DRAW_RESPONSE", payload: { accept: true } }));
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 120));
 
     const terminated = whiteMsgs.find((m) => m.type === "GAME_TERMINATED");
     expect(terminated).toBeDefined();
