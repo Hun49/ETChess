@@ -27,12 +27,13 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { MetricsCollector } from "../lib/observability";
+import { buildRatingUpdateSet, fetchUserCategoryRating } from "../lib/ratingStorage";
 import { getWsTicketSecret } from "../lib/secrets";
 import { TicketReplayGuard, verifyWsTicket } from "../lib/wsTicket";
 import type { Env } from "../types";
 
 export interface StoredTimer {
-  kind: "FIRST_MOVE_DEADLINE" | "CLOCK_FLAG" | "DISCONNECT_GRACE" | "AUTO_CLOSE";
+  kind: "FIRST_MOVE_DEADLINE" | "CLOCK_FLAG" | "DISCONNECT_GRACE" | "AUTO_CLOSE" | "FINALIZE_RETRY";
   dueAt: number;
   ply: number;
   version: number;
@@ -43,6 +44,8 @@ export interface PlayerSessionState {
   userId: string;
   userName: string;
   rating: number;
+  rd?: number;
+  vol?: number;
   connected: boolean;
   disconnectedAt?: number | null;
 }
@@ -79,12 +82,21 @@ export interface StoredGameSessionState {
   whiteRatingBefore?: number;
   whiteRatingAfter?: number;
   whiteRatingDiff?: number;
+  whiteRdBefore?: number;
+  whiteRdAfter?: number;
+  whiteVolBefore?: number;
+  whiteVolAfter?: number;
   blackRatingBefore?: number;
   blackRatingAfter?: number;
   blackRatingDiff?: number;
+  blackRdBefore?: number;
+  blackRdAfter?: number;
+  blackVolBefore?: number;
+  blackVolAfter?: number;
   startedAt: number;
   endedAt?: number;
   finalized: boolean;
+  persistedToD1?: boolean;
 }
 
 interface SocketAttachment {
@@ -213,12 +225,18 @@ export class GameSessionDO extends DurableObject<Env> {
         whiteUserId: string;
         whiteUserName: string;
         whiteRating?: number;
+        whiteRd?: number;
+        whiteVol?: number;
         blackUserId: string;
         blackUserName: string;
         blackRating?: number;
+        blackRd?: number;
+        blackVol?: number;
         timeControl: TimeControlKey;
         rated: boolean;
         isFriendGame?: boolean;
+        initialFen?: string;
+        initialPly?: number;
       };
 
       const existing = await this.loadState();
@@ -231,25 +249,32 @@ export class GameSessionDO extends DurableObject<Env> {
       const initialMs = tc.initialSeconds * 1000;
       const incrementMs = tc.incrementSeconds * 1000;
       const isFriend = !!body.isFriendGame;
+      const initialFen = body.initialFen || STARTING_FEN;
+      const initialTurn = initialFen.split(" ")[1] === "b" ? "b" : "w";
+      const initialPly = body.initialPly ?? 0;
 
       const newState: StoredGameSessionState = {
         version: 1,
-        ply: 0,
+        ply: initialPly,
         gameId: body.gameId,
-        fen: STARTING_FEN,
+        fen: initialFen,
         pgn: "",
-        turn: "w",
+        turn: initialTurn,
         status: "active",
         whitePlayer: {
           userId: body.whiteUserId,
           userName: body.whiteUserName,
           rating: body.whiteRating ?? 1500,
+          rd: body.whiteRd ?? PRODUCT_RULES.GLICKO2_DEFAULT_RD,
+          vol: body.whiteVol ?? PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY,
           connected: false,
         },
         blackPlayer: {
           userId: body.blackUserId,
           userName: body.blackUserName,
           rating: body.blackRating ?? 1500,
+          rd: body.blackRd ?? PRODUCT_RULES.GLICKO2_DEFAULT_RD,
+          vol: body.blackVol ?? PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY,
           connected: false,
         },
         timeControl: body.timeControl,
@@ -262,7 +287,7 @@ export class GameSessionDO extends DurableObject<Env> {
         whiteMs: initialMs,
         blackMs: initialMs,
         lastMoveServerTime: now,
-        isClockRunning: false, // RULE-01: holds until ply 2
+        isClockRunning: initialPly >= 2,
         moves: [],
         startedAt: now,
         finalized: false,
@@ -271,14 +296,33 @@ export class GameSessionDO extends DurableObject<Env> {
       this.state = newState;
       this.timers = [];
 
-      // RULE-01: Schedule first-move deadline (30s for White)
-      this.addTimer({
-        kind: "FIRST_MOVE_DEADLINE",
-        dueAt: now + PRODUCT_RULES.FIRST_MOVE_DEADLINE_MS,
-        ply: 0,
-        version: newState.version,
-        role: "white",
-      });
+      if (initialPly === 0) {
+        // RULE-01: Schedule first-move deadline (30s for White)
+        this.addTimer({
+          kind: "FIRST_MOVE_DEADLINE",
+          dueAt: now + PRODUCT_RULES.FIRST_MOVE_DEADLINE_MS,
+          ply: 0,
+          version: newState.version,
+          role: "white",
+        });
+      } else if (initialPly === 1) {
+        this.addTimer({
+          kind: "FIRST_MOVE_DEADLINE",
+          dueAt: now + PRODUCT_RULES.FIRST_MOVE_DEADLINE_MS,
+          ply: 1,
+          version: newState.version,
+          role: "black",
+        });
+      } else {
+        const activeMs = initialTurn === "w" ? initialMs : initialMs;
+        this.addTimer({
+          kind: "CLOCK_FLAG",
+          dueAt: now + activeMs,
+          ply: initialPly,
+          version: newState.version,
+          role: initialTurn === "w" ? "white" : "black",
+        });
+      }
 
       await this.persistState();
       MetricsCollector.gamesStarted({
@@ -294,6 +338,17 @@ export class GameSessionDO extends DurableObject<Env> {
       const state = await this.loadState();
       if (!state) return new Response("Game Not Found", { status: 404 });
       return Response.json(state);
+    }
+
+    // 3. HTTP Finalize Retry / Re-execution (for idempotency and retry test)
+    if (url.pathname.endsWith("/retry-finalize") && request.method === "POST") {
+      const state = await this.loadState();
+      if (!state) return new Response("Game Not Found", { status: 404 });
+      state.finalized = false;
+      state.persistedToD1 = false;
+      await this.finalizeGame();
+      await this.persistState();
+      return Response.json({ success: true, persistedToD1: state.persistedToD1 });
     }
 
     // 3. WebSocket Connection Upgrade
@@ -666,6 +721,16 @@ export class GameSessionDO extends DurableObject<Env> {
       state.status = "ended";
       state.result = "1/2-1/2";
       state.termination = "insufficient_material";
+    } else if (snapshot.isDrawByFiftyMoves) {
+      gameOver = true;
+      state.status = "ended";
+      state.result = "1/2-1/2";
+      state.termination = "fifty_moves";
+    } else if (snapshot.isDraw) {
+      gameOver = true;
+      state.status = "ended";
+      state.result = "1/2-1/2";
+      state.termination = "draw";
     }
 
     // 7. Schedule next timer if game active
@@ -946,16 +1011,22 @@ export class GameSessionDO extends DurableObject<Env> {
     // 1. Calculate Glicko-2 ratings if rated and not aborted
     if (state.rated && state.status === "ended" && state.result && state.result !== "aborted") {
       const score = state.result === "1-0" ? 1 : state.result === "0-1" ? 0 : 0.5;
+
+      const whiteRd = state.whitePlayer.rd ?? PRODUCT_RULES.GLICKO2_DEFAULT_RD;
+      const whiteVol = state.whitePlayer.vol ?? PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY;
+      const blackRd = state.blackPlayer.rd ?? PRODUCT_RULES.GLICKO2_DEFAULT_RD;
+      const blackVol = state.blackPlayer.vol ?? PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY;
+
       const ratingCalc = applyGameResult({
         whiteRating: {
           rating: state.whitePlayer.rating,
-          deviation: PRODUCT_RULES.GLICKO2_DEFAULT_RD,
-          volatility: PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY,
+          deviation: whiteRd,
+          volatility: whiteVol,
         },
         blackRating: {
           rating: state.blackPlayer.rating,
-          deviation: PRODUCT_RULES.GLICKO2_DEFAULT_RD,
-          volatility: PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY,
+          deviation: blackRd,
+          volatility: blackVol,
         },
         score,
       });
@@ -963,10 +1034,18 @@ export class GameSessionDO extends DurableObject<Env> {
       state.whiteRatingBefore = ratingCalc.white.ratingBefore;
       state.whiteRatingAfter = ratingCalc.white.ratingAfter;
       state.whiteRatingDiff = ratingCalc.white.diff;
+      state.whiteRdBefore = ratingCalc.white.rdBefore;
+      state.whiteRdAfter = ratingCalc.white.rdAfter;
+      state.whiteVolBefore = ratingCalc.white.volatilityBefore;
+      state.whiteVolAfter = ratingCalc.white.volatilityAfter;
 
       state.blackRatingBefore = ratingCalc.black.ratingBefore;
       state.blackRatingAfter = ratingCalc.black.ratingAfter;
       state.blackRatingDiff = ratingCalc.black.diff;
+      state.blackRdBefore = ratingCalc.black.rdBefore;
+      state.blackRdAfter = ratingCalc.black.rdAfter;
+      state.blackVolBefore = ratingCalc.black.volatilityBefore;
+      state.blackVolAfter = ratingCalc.black.volatilityAfter;
     }
 
     // 2. Build official PGN with headers
@@ -982,53 +1061,109 @@ export class GameSessionDO extends DurableObject<Env> {
       moves: state.moves,
     });
 
-    state.finalized = true;
+    // 3. Batch write to D1 Database with idempotence and retry resilience (H1 & H2)
+    if (!state.persistedToD1) {
+      try {
+        const db = drizzle(this.env.DB, { schema });
 
-    // 3. Persist finalized state to DO storage
-    await this.persistState();
+        let whiteUpdateSet: Record<string, unknown> | null = null;
+        let blackUpdateSet: Record<string, unknown> | null = null;
 
-    // 4. Batch write to D1 Database
-    try {
-      const db = drizzle(this.env.DB, { schema });
-      await db.batch([
-        db.insert(schema.games).values({
-          id: state.gameId,
-          whitePlayerId: state.whitePlayer.userId,
-          blackPlayerId: state.blackPlayer.userId,
-          timeControl: state.timeControl,
-          category: state.category,
-          moves: JSON.stringify(state.moves),
-          result: state.result || "*",
-          termination: state.termination || "unknown",
-          whiteRatingBefore: state.whiteRatingBefore,
-          whiteRatingChange: state.whiteRatingDiff,
-          blackRatingBefore: state.blackRatingBefore,
-          blackRatingChange: state.blackRatingDiff,
-          startedAt: new Date(state.startedAt),
-          endedAt: new Date(state.endedAt),
-        }),
-        ...(state.rated && state.whiteRatingAfter && state.blackRatingAfter
-          ? [
-              db
-                .update(schema.ratings)
-                .set({
-                  blitzRating: state.whiteRatingAfter,
-                  updatedAt: new Date(),
-                })
-                .where(eq(schema.ratings.userId, state.whitePlayer.userId)),
-              db
-                .update(schema.ratings)
-                .set({
-                  blitzRating: state.blackRatingAfter,
-                  updatedAt: new Date(),
-                })
-                .where(eq(schema.ratings.userId, state.blackPlayer.userId)),
-            ]
-          : []),
-      ]);
-    } catch (err) {
-      console.error("Failed to write game batch to D1:", err);
+        if (state.rated && state.whiteRatingAfter != null && state.blackRatingAfter != null) {
+          const whiteCurrent = await fetchUserCategoryRating(
+            db,
+            state.whitePlayer.userId,
+            state.category,
+          );
+          const blackCurrent = await fetchUserCategoryRating(
+            db,
+            state.blackPlayer.userId,
+            state.category,
+          );
+
+          const whiteOutcome: "win" | "loss" | "draw" =
+            state.result === "1-0" ? "win" : state.result === "0-1" ? "loss" : "draw";
+          const blackOutcome: "win" | "loss" | "draw" =
+            state.result === "0-1" ? "win" : state.result === "1-0" ? "loss" : "draw";
+
+          whiteUpdateSet = buildRatingUpdateSet(
+            state.category,
+            {
+              rating: state.whiteRatingAfter,
+              rd: state.whiteRdAfter ?? whiteCurrent.rd,
+              vol: state.whiteVolAfter ?? whiteCurrent.vol,
+            },
+            whiteCurrent,
+            whiteOutcome,
+          );
+
+          blackUpdateSet = buildRatingUpdateSet(
+            state.category,
+            {
+              rating: state.blackRatingAfter,
+              rd: state.blackRdAfter ?? blackCurrent.rd,
+              vol: state.blackVolAfter ?? blackCurrent.vol,
+            },
+            blackCurrent,
+            blackOutcome,
+          );
+        }
+
+        await db.batch([
+          db
+            .insert(schema.games)
+            .values({
+              id: state.gameId,
+              whitePlayerId: state.whitePlayer.userId,
+              blackPlayerId: state.blackPlayer.userId,
+              timeControl: state.timeControl,
+              category: state.category,
+              moves: JSON.stringify(state.moves),
+              result: state.result || "*",
+              termination: state.termination || "unknown",
+              whiteRatingBefore: state.whiteRatingBefore,
+              whiteRatingChange: state.whiteRatingDiff,
+              blackRatingBefore: state.blackRatingBefore,
+              blackRatingChange: state.blackRatingDiff,
+              startedAt: new Date(state.startedAt),
+              endedAt: new Date(state.endedAt),
+            })
+            .onConflictDoNothing({ target: schema.games.id }),
+          ...(whiteUpdateSet
+            ? [
+                db
+                  .update(schema.ratings)
+                  .set(whiteUpdateSet)
+                  .where(eq(schema.ratings.userId, state.whitePlayer.userId)),
+              ]
+            : []),
+          ...(blackUpdateSet
+            ? [
+                db
+                  .update(schema.ratings)
+                  .set(blackUpdateSet)
+                  .where(eq(schema.ratings.userId, state.blackPlayer.userId)),
+              ]
+            : []),
+        ]);
+
+        state.persistedToD1 = true;
+        state.finalized = true;
+      } catch (err) {
+        console.error("Failed to write game batch to D1, scheduling retry:", err);
+        state.persistedToD1 = false;
+        // Schedule retry timer for D1 persistence (H2)
+        this.addTimer({
+          kind: "FINALIZE_RETRY",
+          dueAt: Date.now() + 2000,
+          ply: state.ply,
+          version: state.version,
+        });
+      }
     }
+
+    // 4. Persist finalized state to DO storage
+    await this.persistState();
 
     // 5. Broadcast GAME_TERMINATED frame
     this.broadcast({
@@ -1073,7 +1208,7 @@ export class GameSessionDO extends DurableObject<Env> {
 
     const now = Date.now();
     const minDueAt = this.timers.length > 0 ? Math.min(...this.timers.map((t) => t.dueAt)) : 0;
-    const threshold = Math.max(now + 50, minDueAt);
+    const threshold = Math.max(now, minDueAt);
     const dueTimers = this.timers.filter((t) => t.dueAt <= threshold);
 
     for (const timer of dueTimers) {
@@ -1120,6 +1255,13 @@ export class GameSessionDO extends DurableObject<Env> {
           state.termination = "abandoned";
           await this.persistState();
           await this.finalizeGame();
+          break;
+        }
+
+        case "FINALIZE_RETRY": {
+          if (!state.finalized || !state.persistedToD1) {
+            await this.finalizeGame();
+          }
           break;
         }
 

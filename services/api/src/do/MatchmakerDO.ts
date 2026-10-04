@@ -18,6 +18,7 @@ import { and, eq, gt, isNotNull, or } from "drizzle-orm";
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { MetricsCollector } from "../lib/observability";
+import { fetchUserCategoryRating } from "../lib/ratingStorage";
 import { getWsTicketSecret } from "../lib/secrets";
 import { TicketReplayGuard, verifyWsTicket } from "../lib/wsTicket";
 import type { Env } from "../types";
@@ -26,6 +27,8 @@ export interface QueuedPlayer {
   userId: string;
   userName: string;
   rating: number;
+  rd?: number;
+  vol?: number;
   timeControlId: TimeControlKey;
   category: RatingCategory;
   rated: boolean;
@@ -228,9 +231,13 @@ export class MatchmakerDO extends DurableObject<Env> {
           whiteUserId: white.userId,
           whiteUserName: white.userName,
           whiteRating: white.rating,
+          whiteRd: white.rd,
+          whiteVol: white.vol,
           blackUserId: black.userId,
           blackUserName: black.userName,
           blackRating: black.rating,
+          blackRd: black.rd,
+          blackVol: black.vol,
           timeControl: white.timeControlId,
           rated: white.rated,
         }),
@@ -414,11 +421,28 @@ export class MatchmakerDO extends DurableObject<Env> {
         // Evict any existing queue entries for this user
         this.queue = queue.filter((p) => p.userId !== attachment.userId);
 
+        let rating = attachment.rating ?? 1500;
+        let rd: number | undefined;
+        let vol: number | undefined;
+
+        if (this.env.DB) {
+          try {
+            const catData = await fetchUserCategoryRating(this.env.DB, attachment.userId, category);
+            rating = Math.round(catData.rating);
+            rd = catData.rd;
+            vol = catData.vol;
+          } catch (e) {
+            console.error("Failed to load user category rating from D1:", e);
+          }
+        }
+
         const now = Date.now();
         const queuedPlayer: QueuedPlayer = {
           userId: attachment.userId,
           userName: attachment.userName || "Player",
-          rating: attachment.rating ?? 1500,
+          rating,
+          rd,
+          vol,
           timeControlId,
           category,
           rated,

@@ -1,9 +1,11 @@
+import type { RatingCategory } from "@etchess/types";
 import { zValidator } from "@hono/zod-validator";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { z } from "zod";
 import * as schema from "../db/schema";
+import { fetchUserCategoryRating } from "../lib/ratingStorage";
 import { getWsTicketSecret } from "../lib/secrets";
 import { createWsTicket } from "../lib/wsTicket";
 import { type HonoVariables, requireAuth } from "../middleware/session";
@@ -18,6 +20,7 @@ const TicketRequestSchema = z
   .object({
     scope: z.enum(["game", "user"]),
     gameId: z.string().optional(),
+    category: z.enum(["bullet", "blitz", "rapid", "classical"]).optional(),
   })
   .refine((data) => data.scope !== "game" || !!data.gameId, {
     message: "gameId is required when scope is 'game'",
@@ -38,18 +41,11 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
     );
   }
 
-  const { scope, gameId } = c.req.valid("json");
+  const { scope, gameId, category: reqCategory } = c.req.valid("json");
   const db = drizzle(c.env.DB, { schema });
 
-  // Retrieve user blitz rating (default 1500)
-  const [ratingRow] = await db
-    .select({ blitzRating: schema.ratings.blitzRating })
-    .from(schema.ratings)
-    .where(eq(schema.ratings.userId, user.id));
-
-  const userRating = Math.round(ratingRow?.blitzRating ?? 1500);
-
   let role: "white" | "black" | "spectator" = "spectator";
+  let targetCategory: RatingCategory = reqCategory || "blitz";
 
   if (scope === "game" && gameId) {
     // Verify game existence in D1
@@ -57,6 +53,7 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
       .select({
         whitePlayerId: schema.games.whitePlayerId,
         blackPlayerId: schema.games.blackPlayerId,
+        category: schema.games.category,
       })
       .from(schema.games)
       .where(eq(schema.games.id, gameId));
@@ -71,6 +68,10 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
         },
         404,
       );
+    }
+
+    if (game.category) {
+      targetCategory = game.category as RatingCategory;
     }
 
     if (game.whitePlayerId === user.id) {
@@ -93,6 +94,9 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
       role = "spectator";
     }
   }
+
+  const userCatData = await fetchUserCategoryRating(db, user.id, targetCategory);
+  const userRating = Math.round(userCatData.rating);
 
   const secret = getWsTicketSecret(c.env);
 

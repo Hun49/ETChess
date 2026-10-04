@@ -69,15 +69,35 @@ export const ratings = sqliteTable("ratings", {
   bulletRating: real("bullet_rating").notNull().default(1500),
   bulletRd: real("bullet_rd").notNull().default(350),
   bulletVol: real("bullet_vol").notNull().default(0.06),
+  bulletGames: integer("bullet_games").notNull().default(0),
+  bulletWins: integer("bullet_wins").notNull().default(0),
+  bulletLosses: integer("bullet_losses").notNull().default(0),
+  bulletDraws: integer("bullet_draws").notNull().default(0),
+
   blitzRating: real("blitz_rating").notNull().default(1500),
   blitzRd: real("blitz_rd").notNull().default(350),
   blitzVol: real("blitz_vol").notNull().default(0.06),
+  blitzGames: integer("blitz_games").notNull().default(0),
+  blitzWins: integer("blitz_wins").notNull().default(0),
+  blitzLosses: integer("blitz_losses").notNull().default(0),
+  blitzDraws: integer("blitz_draws").notNull().default(0),
+
   rapidRating: real("rapid_rating").notNull().default(1500),
   rapidRd: real("rapid_rd").notNull().default(350),
   rapidVol: real("rapid_vol").notNull().default(0.06),
+  rapidGames: integer("rapid_games").notNull().default(0),
+  rapidWins: integer("rapid_wins").notNull().default(0),
+  rapidLosses: integer("rapid_losses").notNull().default(0),
+  rapidDraws: integer("rapid_draws").notNull().default(0),
+
   classicalRating: real("classical_rating").notNull().default(1500),
   classicalRd: real("classical_rd").notNull().default(350),
   classicalVol: real("classical_vol").notNull().default(0.06),
+  classicalGames: integer("classical_games").notNull().default(0),
+  classicalWins: integer("classical_wins").notNull().default(0),
+  classicalLosses: integer("classical_losses").notNull().default(0),
+  classicalDraws: integer("classical_draws").notNull().default(0),
+
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 

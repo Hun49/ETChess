@@ -2,6 +2,7 @@ import { shouldRefuseRatedPair } from "@etchess/rating";
 import { PROTOCOL_VERSION } from "@etchess/realtime-protocol";
 import {
   PRODUCT_RULES,
+  type RatingCategory,
   TIME_CONTROLS,
   type TimeControlKey,
   getRatingCategory,
@@ -13,6 +14,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import * as schema from "../db/schema";
 import { notifyUserChannel } from "../lib/notifier";
+import { fetchUserCategoryRating } from "../lib/ratingStorage";
 import { type HonoVariables, requireAuth } from "../middleware/session";
 import type { Env } from "../types";
 
@@ -154,11 +156,8 @@ challengesRoute.post("/", zValidator("json", CreateChallengeSchema), async (c) =
   });
 
   // 6. Get challenger rating for notification
-  const [ratingRow] = await db
-    .select({ blitzRating: schema.ratings.blitzRating })
-    .from(schema.ratings)
-    .where(eq(schema.ratings.userId, user.id));
-  const challengerRating = Math.round(ratingRow?.blitzRating ?? 1500);
+  const challengerRatingData = await fetchUserCategoryRating(db, user.id, category);
+  const challengerRating = Math.round(challengerRatingData.rating);
 
   // 7. If direct challenge, notify challenged user in real-time over /ws/user
   if (challengedId) {
@@ -292,18 +291,12 @@ challengesRoute.post("/:id/accept", async (c) => {
     .from(schema.user)
     .where(eq(schema.user.id, challenge.challengerId));
 
-  const [challengerRatingRow] = await db
-    .select({ blitzRating: schema.ratings.blitzRating })
-    .from(schema.ratings)
-    .where(eq(schema.ratings.userId, challenge.challengerId));
+  const category = challenge.category as RatingCategory;
+  const challengerRatingData = await fetchUserCategoryRating(db, challenge.challengerId, category);
+  const accepterRatingData = await fetchUserCategoryRating(db, user.id, category);
 
-  const [accepterRatingRow] = await db
-    .select({ blitzRating: schema.ratings.blitzRating })
-    .from(schema.ratings)
-    .where(eq(schema.ratings.userId, user.id));
-
-  const challengerRating = Math.round(challengerRatingRow?.blitzRating ?? 1500);
-  const accepterRating = Math.round(accepterRatingRow?.blitzRating ?? 1500);
+  const challengerRating = Math.round(challengerRatingData.rating);
+  const accepterRating = Math.round(accepterRatingData.rating);
 
   // 5. Determine piece colors
   let challengerWhite = false;
@@ -318,10 +311,14 @@ challengesRoute.post("/:id/accept", async (c) => {
   const whiteUserId = challengerWhite ? challenge.challengerId : user.id;
   const whiteUserName = challengerWhite ? challenger?.name || "Player 1" : user.name;
   const whiteRating = challengerWhite ? challengerRating : accepterRating;
+  const whiteRd = challengerWhite ? challengerRatingData.rd : accepterRatingData.rd;
+  const whiteVol = challengerWhite ? challengerRatingData.vol : accepterRatingData.vol;
 
   const blackUserId = challengerWhite ? user.id : challenge.challengerId;
   const blackUserName = challengerWhite ? user.name : challenger?.name || "Player 2";
   const blackRating = challengerWhite ? accepterRating : challengerRating;
+  const blackRd = challengerWhite ? accepterRatingData.rd : challengerRatingData.rd;
+  const blackVol = challengerWhite ? accepterRatingData.vol : challengerRatingData.vol;
 
   const gameId = crypto.randomUUID();
 
@@ -337,9 +334,13 @@ challengesRoute.post("/:id/accept", async (c) => {
         whiteUserId,
         whiteUserName,
         whiteRating,
+        whiteRd,
+        whiteVol,
         blackUserId,
         blackUserName,
         blackRating,
+        blackRd,
+        blackVol,
         timeControl: challenge.timeControl,
         rated: challenge.rated,
         isFriendGame: !challenge.rated, // Casual friend game enables takebacks (RULE-10)

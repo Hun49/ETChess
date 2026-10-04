@@ -21,6 +21,7 @@ export interface GameStateSnapshot {
   isStalemate: boolean;
   isThreefoldRepetition: boolean;
   isInsufficientMaterial: boolean;
+  isDrawByFiftyMoves: boolean;
   history: string[];
 }
 
@@ -58,6 +59,7 @@ export function validateAndApplyMove(currentFen: string, move: MoveInput): MoveV
         isStalemate: chess.isStalemate(),
         isThreefoldRepetition: chess.isThreefoldRepetition(),
         isInsufficientMaterial: chess.isInsufficientMaterial(),
+        isDrawByFiftyMoves: chess.isDrawByFiftyMoves(),
         history: chess.history(),
       },
     };

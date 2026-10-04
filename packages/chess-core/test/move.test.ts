@@ -81,4 +81,16 @@ describe("Move validation & execution", () => {
     expect(isInCheck(checkFen)).toBe(true);
     expect(isGameOver(checkFen)).toBe(false);
   });
+
+  it("detects draw by 50-move rule when half-move clock reaches 100", () => {
+    // Legal FEN with halfmove clock at 99: White plays quiet rook move
+    const fen99 = "4k3/8/8/8/8/8/8/4K2R w - - 99 50";
+    const res = validateAndApplyMove(fen99, { from: "h1", to: "g1" });
+    expect(res.valid).toBe(true);
+    if (!res.valid) return;
+
+    expect(res.snapshot.isDrawByFiftyMoves).toBe(true);
+    expect(res.snapshot.isDraw).toBe(true);
+    expect(res.snapshot.isGameOver).toBe(true);
+  });
 });
