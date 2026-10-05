@@ -42,7 +42,9 @@ export const ClientDrawResponsePayloadSchema = z.object({
 
 export const ClientResignPayloadSchema = z.object({});
 
-export const ClientTakebackRequestPayloadSchema = z.object({});
+export const ClientTakebackRequestPayloadSchema = z.object({
+  plies: z.union([z.literal(1), z.literal(2)]).optional(),
+});
 
 export const ClientTakebackResponsePayloadSchema = z.object({
   accept: z.boolean(),

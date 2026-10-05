@@ -76,8 +76,12 @@ export interface StoredGameSessionState {
   moves: string[]; // SAN moves
   drawOfferFrom?: "white" | "black" | null;
   drawOfferPly?: number | null;
+  lastDrawOfferPlyWhite?: number | null;
+  lastDrawOfferPlyBlack?: number | null;
+  moveClockHistory?: Array<{ whiteMs: number; blackMs: number }>;
   takebackOfferFrom?: "white" | "black" | null;
   takebackOfferPly?: number | null;
+  takebackOfferPlies?: 1 | 2;
   result?: "1-0" | "0-1" | "1/2-1/2" | "aborted";
   termination?: string;
   winnerRole?: "white" | "black";
@@ -134,12 +138,14 @@ export class GameSessionDO extends DurableObject<Env> {
 
   /**
    * "Durable before visible" (Change 4):
-   * Always persists state and timers to durable storage before any broadcast.
+   * Always persists state and timers to durable storage in a single atomic transaction before any broadcast.
    */
   private async persistState(): Promise<void> {
     if (!this.state) return;
-    await this.ctx.storage.put("gameState", this.state);
-    await this.ctx.storage.put("timers", this.timers);
+    await this.ctx.storage.put({
+      gameState: this.state,
+      timers: this.timers,
+    });
     await this.syncAlarm();
   }
 
@@ -499,7 +505,14 @@ export class GameSessionDO extends DurableObject<Env> {
       }
 
       case "TAKEBACK_REQUEST": {
-        await this.handleTakebackRequest(ws, attachment);
+        const plies =
+          "payload" in frame &&
+          frame.payload &&
+          typeof frame.payload === "object" &&
+          "plies" in frame.payload
+            ? (frame.payload.plies as 1 | 2)
+            : undefined;
+        await this.handleTakebackRequest(ws, attachment, plies);
         break;
       }
 
@@ -765,6 +778,13 @@ export class GameSessionDO extends DurableObject<Env> {
     }
 
     // 5. Update state
+    state.moveClockHistory = state.moveClockHistory || [];
+    state.moveClockHistory.push({ whiteMs: state.whiteMs, blackMs: state.blackMs });
+
+    // Clear any open draw offer when a move is played (M1)
+    state.drawOfferFrom = null;
+    state.drawOfferPly = null;
+
     state.whiteMs = clockResult.whiteMs;
     state.blackMs = clockResult.blackMs;
     state.lastMoveServerTime = now;
@@ -883,18 +903,19 @@ export class GameSessionDO extends DurableObject<Env> {
       return;
     }
 
-    // RULE-09: Cooldown between offers by same player
+    // RULE-09: Cooldown between offers by same player (M1)
+    const lastOfferPly =
+      attachment.role === "white" ? state.lastDrawOfferPlyWhite : state.lastDrawOfferPlyBlack;
     if (
-      state.drawOfferFrom === attachment.role &&
-      state.drawOfferPly !== null &&
-      state.drawOfferPly !== undefined &&
-      state.ply - state.drawOfferPly < PRODUCT_RULES.DRAW_COOLDOWN_PLIES
+      lastOfferPly !== null &&
+      lastOfferPly !== undefined &&
+      state.ply - lastOfferPly < PRODUCT_RULES.DRAW_COOLDOWN_PLIES
     ) {
       this.send(ws, {
         v: PROTOCOL_VERSION,
         type: "ERROR",
         code: "DRAW_COOLDOWN",
-        message: "You must wait 5 plies before offering another draw",
+        message: `You must wait ${PRODUCT_RULES.DRAW_COOLDOWN_PLIES} plies before offering another draw`,
         serverTime: Date.now(),
       });
       return;
@@ -902,6 +923,11 @@ export class GameSessionDO extends DurableObject<Env> {
 
     state.drawOfferFrom = attachment.role;
     state.drawOfferPly = state.ply;
+    if (attachment.role === "white") {
+      state.lastDrawOfferPlyWhite = state.ply;
+    } else {
+      state.lastDrawOfferPlyBlack = state.ply;
+    }
     await this.persistState();
 
     this.broadcast({
@@ -926,10 +952,12 @@ export class GameSessionDO extends DurableObject<Env> {
       state.result = "1/2-1/2";
       state.termination = "agreement";
       state.drawOfferFrom = null;
+      state.drawOfferPly = null;
       await this.persistState();
       await this.finalizeGame();
     } else {
       state.drawOfferFrom = null;
+      state.drawOfferPly = null;
       await this.persistState();
       this.broadcast({
         v: PROTOCOL_VERSION,
@@ -953,7 +981,11 @@ export class GameSessionDO extends DurableObject<Env> {
     await this.finalizeGame();
   }
 
-  private async handleTakebackRequest(ws: WebSocket, attachment: SocketAttachment): Promise<void> {
+  private async handleTakebackRequest(
+    ws: WebSocket,
+    attachment: SocketAttachment,
+    plies?: 1 | 2,
+  ): Promise<void> {
     const state = await this.loadState();
     if (!state || state.status !== "active") return;
     if (attachment.role !== "white" && attachment.role !== "black") return;
@@ -979,6 +1011,7 @@ export class GameSessionDO extends DurableObject<Env> {
 
     state.takebackOfferFrom = attachment.role;
     state.takebackOfferPly = state.ply;
+    state.takebackOfferPlies = plies;
     await this.persistState();
 
     this.broadcast({
@@ -996,9 +1029,10 @@ export class GameSessionDO extends DurableObject<Env> {
   ): Promise<void> {
     const state = await this.loadState();
     if (!state || state.status !== "active" || !state.takebackOfferFrom) return;
-    if (attachment.role === state.takebackOfferFrom) return;
-
+    const requestedPlies = state.takebackOfferPlies;
     state.takebackOfferFrom = null;
+    state.takebackOfferPly = null;
+    state.takebackOfferPlies = undefined;
 
     if (!accept) {
       await this.persistState();
@@ -1017,21 +1051,50 @@ export class GameSessionDO extends DurableObject<Env> {
       return;
     }
 
-    // Rewind 2 plies if taking back full turn, or 1 ply if opponent made last move
-    const rewound = applyTakeback(state.moves, 2);
+    // Rewind dynamically:
+    // If client specified 1 or 2 plies, use it; otherwise default to 2 (or 1 if ply < 2)
+    let pliesToRewind: 1 | 2 = 2;
+    if (requestedPlies === 1 || requestedPlies === 2) {
+      pliesToRewind = requestedPlies;
+    } else {
+      pliesToRewind = state.ply >= 2 ? 2 : 1;
+    }
+
+    const rewound = applyTakeback(state.moves, pliesToRewind);
     state.fen = rewound.fen;
     state.ply = rewound.ply;
     state.turn = rewound.turn;
     state.moves = rewound.moves;
     state.version++;
 
+    // Restore clocks from moveClockHistory (M2)
+    if (state.moveClockHistory && state.moveClockHistory.length > 0) {
+      state.moveClockHistory = state.moveClockHistory.slice(
+        0,
+        Math.max(0, state.moveClockHistory.length - pliesToRewind),
+      );
+      const lastSnapshot = state.moveClockHistory[state.moveClockHistory.length - 1];
+      if (lastSnapshot) {
+        state.whiteMs = lastSnapshot.whiteMs;
+        state.blackMs = lastSnapshot.blackMs;
+      } else {
+        state.whiteMs = state.initialMs;
+        state.blackMs = state.initialMs;
+      }
+    }
+
+    // Reset lastMoveServerTime to now so players are not charged negotiation time (M2)
+    const now = Date.now();
+    state.lastMoveServerTime = now;
+    state.isClockRunning = isClockRunningForPly(state.ply);
+
     // Re-arm clock flag timer for turn to move
     this.removeTimer((t) => t.kind === "CLOCK_FLAG" || t.kind === "FIRST_MOVE_DEADLINE");
-    if (state.ply >= 2) {
+    if (state.ply >= 2 && state.isClockRunning) {
       const activeMs = state.turn === "w" ? state.whiteMs : state.blackMs;
       this.addTimer({
         kind: "CLOCK_FLAG",
-        dueAt: Date.now() + activeMs,
+        dueAt: now + activeMs,
         ply: state.ply,
         version: state.version,
         role: state.turn === "w" ? "white" : "black",
