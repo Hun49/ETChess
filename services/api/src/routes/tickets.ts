@@ -51,7 +51,7 @@ ticketRoute.post("/", requireAuth, zValidator("json", TicketRequestSchema), asyn
     let gameFound = false;
 
     // Check live Durable Object session first
-    const ns = c.env.GAME_SESSION_DO || c.env.GAME_ROOM_DO;
+    const ns = c.env.GAME_SESSION_DO;
     if (ns) {
       try {
         const sessionDO = ns.get(ns.idFromName(gameId));

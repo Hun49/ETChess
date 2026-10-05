@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // ============================================================================
 // Better Auth Core Tables
@@ -101,37 +101,56 @@ export const ratings = sqliteTable("ratings", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
-export const games = sqliteTable("games", {
-  id: text("id").primaryKey(),
-  whitePlayerId: text("white_player_id").references(() => user.id),
-  blackPlayerId: text("black_player_id").references(() => user.id),
-  timeControl: text("time_control").notNull(), // '1+0', '3+2', etc.
-  category: text("category").notNull(), // 'bullet' | 'blitz' | 'rapid' | 'classical'
-  moves: text("moves").notNull(), // JSON array of SAN / UCI move objects
-  result: text("result").notNull(), // '1-0' | '0-1' | '1/2-1/2' | '*'
-  termination: text("termination").notNull(), // 'checkmate', 'timeout', 'forfeit', etc.
-  whiteRatingBefore: real("white_rating_before"),
-  whiteRatingChange: real("white_rating_change"),
-  blackRatingBefore: real("black_rating_before"),
-  blackRatingChange: real("black_rating_change"),
-  startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
-  endedAt: integer("ended_at", { mode: "timestamp" }),
-});
+export const games = sqliteTable(
+  "games",
+  {
+    id: text("id").primaryKey(),
+    whitePlayerId: text("white_player_id").references(() => user.id),
+    blackPlayerId: text("black_player_id").references(() => user.id),
+    timeControl: text("time_control").notNull(), // '1+0', '3+2', etc.
+    category: text("category").notNull(), // 'bullet' | 'blitz' | 'rapid' | 'classical'
+    moves: text("moves").notNull(), // JSON array of SAN / UCI move objects
+    result: text("result").notNull(), // '1-0' | '0-1' | '1/2-1/2' | '*'
+    termination: text("termination").notNull(), // 'checkmate', 'timeout', 'forfeit', etc.
+    rated: integer("rated", { mode: "boolean" }).notNull().default(true),
+    gameType: text("game_type").notNull().default("matchmaking"), // 'matchmaking' | 'challenge' | 'bot'
+    whiteRatingBefore: real("white_rating_before"),
+    whiteRatingChange: real("white_rating_change"),
+    blackRatingBefore: real("black_rating_before"),
+    blackRatingChange: real("black_rating_change"),
+    startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+    endedAt: integer("ended_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("games_white_player_started_idx").on(table.whitePlayerId, table.startedAt),
+    index("games_black_player_started_idx").on(table.blackPlayerId, table.startedAt),
+  ],
+);
 
-export const reports = sqliteTable("reports", {
-  id: text("id").primaryKey(),
-  reporterId: text("reporter_id")
-    .notNull()
-    .references(() => user.id),
-  reportedId: text("reported_id")
-    .notNull()
-    .references(() => user.id),
-  gameId: text("game_id").references(() => games.id),
-  reason: text("reason").notNull(),
-  details: text("details"),
-  status: text("status").notNull().default("pending"), // 'pending' | 'resolved' | 'dismissed'
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-});
+export const reports = sqliteTable(
+  "reports",
+  {
+    id: text("id").primaryKey(),
+    reporterId: text("reporter_id")
+      .notNull()
+      .references(() => user.id),
+    reportedId: text("reported_id")
+      .notNull()
+      .references(() => user.id),
+    gameId: text("game_id").references(() => games.id),
+    reason: text("reason").notNull(),
+    details: text("details"),
+    status: text("status").notNull().default("pending"), // 'pending' | 'resolved' | 'dismissed'
+    resolutionNotes: text("resolution_notes"),
+    resolvedBy: text("resolved_by").references(() => user.id),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("reports_status_idx").on(table.status),
+    index("reports_reported_id_idx").on(table.reportedId),
+  ],
+);
 
 export const auditLogs = sqliteTable("audit_logs", {
   id: text("id").primaryKey(),
@@ -144,34 +163,42 @@ export const auditLogs = sqliteTable("audit_logs", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
-export const friends = sqliteTable("friends", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  friendId: text("friend_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'declined' | 'blocked'
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
-});
+export const friends = sqliteTable(
+  "friends",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    friendId: text("friend_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'declined' | 'blocked'
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("friends_user_friend_idx").on(table.userId, table.friendId)],
+);
 
-export const challenges = sqliteTable("challenges", {
-  id: text("id").primaryKey(),
-  challengerId: text("challenger_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  challengedId: text("challenged_id").references(() => user.id, { onDelete: "cascade" }),
-  timeControl: text("time_control").notNull(),
-  category: text("category").notNull(),
-  rated: integer("rated", { mode: "boolean" }).notNull().default(false),
-  preferredColor: text("preferred_color").notNull().default("random"), // 'white' | 'black' | 'random'
-  status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'declined' | 'expired' | 'canceled'
-  gameId: text("game_id"),
-  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-});
+export const challenges = sqliteTable(
+  "challenges",
+  {
+    id: text("id").primaryKey(),
+    challengerId: text("challenger_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    challengedId: text("challenged_id").references(() => user.id, { onDelete: "cascade" }),
+    timeControl: text("time_control").notNull(),
+    category: text("category").notNull(),
+    rated: integer("rated", { mode: "boolean" }).notNull().default(false),
+    preferredColor: text("preferred_color").notNull().default("random"), // 'white' | 'black' | 'random'
+    status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'declined' | 'expired' | 'canceled'
+    gameId: text("game_id"),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("challenges_status_expires_idx").on(table.status, table.expiresAt)],
+);
 
 export type User = typeof user.$inferSelect;
 export type InsertUser = typeof user.$inferInsert;

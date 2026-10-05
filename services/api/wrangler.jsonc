@@ -21,10 +21,6 @@
         "class_name": "GameSessionDO"
       },
       {
-        "name": "GAME_ROOM_DO",
-        "class_name": "GameSessionDO"
-      },
-      {
         "name": "MATCHMAKER_DO",
         "class_name": "MatchmakerDO"
       }
@@ -35,13 +31,32 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "GameSessionDO",
-        "GameRoomDO",
         "MatchmakerDO"
       ]
     }
   ],
+  "observability": {
+    "enabled": true
+  },
   "vars": {
+    "ENVIRONMENT": "development",
     "BETTER_AUTH_URL": "http://localhost:8787",
     "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com"
+  },
+  "env": {
+    "staging": {
+      "name": "etchess-api-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "BETTER_AUTH_URL": "https://staging-api.etchess.io"
+      }
+    },
+    "production": {
+      "name": "etchess-api-production",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "BETTER_AUTH_URL": "https://api.etchess.io"
+      }
+    }
   }
 }

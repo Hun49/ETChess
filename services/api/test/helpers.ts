@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS \`games\` (
 	\`moves\` text NOT NULL,
 	\`result\` text NOT NULL,
 	\`termination\` text NOT NULL,
+	\`rated\` integer DEFAULT true NOT NULL,
+	\`game_type\` text DEFAULT 'matchmaking' NOT NULL,
 	\`white_rating_before\` real,
 	\`white_rating_change\` real,
 	\`black_rating_before\` real,
@@ -107,6 +109,9 @@ CREATE TABLE IF NOT EXISTS \`games\` (
 	FOREIGN KEY (\`black_player_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE no action
 );
 
+CREATE INDEX IF NOT EXISTS \`games_white_player_started_idx\` ON \`games\` (\`white_player_id\`, \`started_at\`);
+CREATE INDEX IF NOT EXISTS \`games_black_player_started_idx\` ON \`games\` (\`black_player_id\`, \`started_at\`);
+
 CREATE TABLE IF NOT EXISTS \`reports\` (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`reporter_id\` text NOT NULL,
@@ -115,11 +120,18 @@ CREATE TABLE IF NOT EXISTS \`reports\` (
 	\`reason\` text NOT NULL,
 	\`details\` text,
 	\`status\` text DEFAULT 'pending' NOT NULL,
+	\`resolution_notes\` text,
+	\`resolved_by\` text,
+	\`resolved_at\` integer,
 	\`created_at\` integer NOT NULL,
 	FOREIGN KEY (\`reporter_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (\`reported_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (\`game_id\`) REFERENCES \`games\`(\`id\`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (\`game_id\`) REFERENCES \`games\`(\`id\`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (\`resolved_by\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE no action
 );
+
+CREATE INDEX IF NOT EXISTS \`reports_status_idx\` ON \`reports\` (\`status\`);
+CREATE INDEX IF NOT EXISTS \`reports_reported_id_idx\` ON \`reports\` (\`reported_id\`);
 
 CREATE TABLE IF NOT EXISTS \`audit_logs\` (
 	\`id\` text PRIMARY KEY NOT NULL,
@@ -142,6 +154,8 @@ CREATE TABLE IF NOT EXISTS \`friends\` (
 	FOREIGN KEY (\`friend_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
 
+CREATE INDEX IF NOT EXISTS \`friends_user_friend_idx\` ON \`friends\` (\`user_id\`, \`friend_id\`);
+
 CREATE TABLE IF NOT EXISTS \`challenges\` (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`challenger_id\` text NOT NULL,
@@ -157,6 +171,8 @@ CREATE TABLE IF NOT EXISTS \`challenges\` (
 	FOREIGN KEY (\`challenger_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (\`challenged_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
+
+CREATE INDEX IF NOT EXISTS \`challenges_status_expires_idx\` ON \`challenges\` (\`status\`, \`expires_at\`);
 `;
 
 export async function applyTestSchema(db: D1Database): Promise<void> {

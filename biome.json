@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json"]
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json"],
+    "ignore": [
+      "**/dist/**",
+      "**/build/**",
+      "**/.turbo/**",
+      "**/drizzle/**",
+      "**/coverage/**",
+      "**/.wrangler/**"
+    ]
   },
   "formatter": {
     "enabled": true,

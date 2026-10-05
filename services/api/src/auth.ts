@@ -42,7 +42,7 @@ export function createAuth(env: Env) {
       emailOTP({
         async sendVerificationOTP({ email, otp, type }) {
           if (env.RESEND_API_KEY) {
-            await fetch("https://api.resend.com/emails", {
+            const res = await fetch("https://api.resend.com/emails", {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${env.RESEND_API_KEY}`,
@@ -64,7 +64,16 @@ export function createAuth(env: Env) {
                 `,
               }),
             });
+            if (!res.ok) {
+              const errBody = await res.text().catch(() => "");
+              console.error(`[ETChess Auth] Failed to send OTP email: ${res.status} ${errBody}`);
+              throw new Error(`Failed to send verification email: HTTP ${res.status}`);
+            }
           } else {
+            // Local development only; never leak OTP in production environment
+            if (env.ENVIRONMENT === "production") {
+              throw new Error("RESEND_API_KEY is not configured in production");
+            }
             console.log(`[ETChess Dev Auth] Verification OTP for ${email}: ${otp} (Type: ${type})`);
           }
         },

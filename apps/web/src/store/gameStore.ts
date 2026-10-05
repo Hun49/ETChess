@@ -410,7 +410,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     get().resetToIdle();
 
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const matchmakerUrl = `${wsProtocol}//${window.location.host}/ws/matchmaker`;
+    const matchmakerUrl = `${wsProtocol}//${window.location.host}/ws/user`;
     const ws = new WebSocket(matchmakerUrl);
     activeMatchmakerWs = ws;
 
@@ -424,8 +424,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     ws.onopen = () => {
       const joinMsg: ClientMatchmakerFrame = {
-        type: "JOIN_QUEUE",
-        payload: { timeControl: tc, rated },
+        type: "QUEUE_JOIN",
+        payload: { timeControlId: tc, rated },
       };
       ws.send(JSON.stringify(joinMsg));
     };
@@ -571,11 +571,17 @@ export const useGameStore = create<GameState>((set, get) => ({
       activeModal: isOver ? "game_over" : get().activeModal,
     });
 
-    // If online, dispatch MOVE to GameRoomDO
+    // If online, dispatch MOVE_INTENT to GameSessionDO
     if (mode === "online" && activeGameWs) {
       const moveFrame: ClientGameFrame = {
-        type: "MOVE",
-        payload: { from, to, promotion },
+        v: 1,
+        type: "MOVE_INTENT",
+        payload: {
+          from,
+          to,
+          promotion,
+          expectedPly: nextMoves.length - 1,
+        },
       };
       activeGameWs.send(JSON.stringify(moveFrame));
     }

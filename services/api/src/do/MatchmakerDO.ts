@@ -231,7 +231,7 @@ export class MatchmakerDO extends DurableObject<Env> {
 
     // 1. Pre-initialize GameSessionDO
     try {
-      const ns = this.env.GAME_SESSION_DO || this.env.GAME_ROOM_DO;
+      const ns = this.env.GAME_SESSION_DO;
       const sessionStub = ns.get(ns.idFromName(gameId));
       const initRes = await sessionStub.fetch("http://internal/init", {
         method: "POST",
@@ -500,7 +500,7 @@ export class MatchmakerDO extends DurableObject<Env> {
         // Enforce active game lock: prevent multiple concurrent live games (H10)
         if (attachment.userId && this.activePlayerGames.has(attachment.userId)) {
           const existingGameId = this.activePlayerGames.get(attachment.userId);
-          const ns = this.env.GAME_SESSION_DO || this.env.GAME_ROOM_DO;
+          const ns = this.env.GAME_SESSION_DO;
           if (ns && existingGameId) {
             try {
               const sessionDO = ns.get(ns.idFromName(existingGameId));

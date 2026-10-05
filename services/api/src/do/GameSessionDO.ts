@@ -711,8 +711,8 @@ export class GameSessionDO extends DurableObject<Env> {
       return;
     }
 
-    // 2. Ply sequence check
-    if (payload.expectedPly !== undefined && payload.expectedPly !== state.ply) {
+    // 2. Ply sequence check (mandatory expectedPly prevents duplicate/replayed frames) (M5)
+    if (payload.expectedPly === undefined || payload.expectedPly !== state.ply) {
       this.send(ws, {
         v: PROTOCOL_VERSION,
         type: "MOVE_REJECTED",
@@ -1264,6 +1264,8 @@ export class GameSessionDO extends DurableObject<Env> {
               moves: JSON.stringify(state.moves),
               result: state.result || "*",
               termination: state.termination || "unknown",
+              rated: state.rated,
+              gameType: state.isFriendGame ? "challenge" : "matchmaking",
               whiteRatingBefore: state.whiteRatingBefore,
               whiteRatingChange: state.whiteRatingDiff,
               blackRatingBefore: state.blackRatingBefore,

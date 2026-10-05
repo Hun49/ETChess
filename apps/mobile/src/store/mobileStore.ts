@@ -445,12 +445,12 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         if (game.mode === "online") {
           realtime.sendGameMessage({
             v: 1,
-            type: "MOVE",
+            type: "MOVE_INTENT",
             payload: {
               from,
               to,
               promotion: (promotion as "q" | "r" | "b" | "n") || undefined,
-              expectedPly: updatedMoves.length,
+              expectedPly: game.moves.length,
             },
           });
         }

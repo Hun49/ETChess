@@ -19,7 +19,7 @@ import { ticketRoute } from "./routes/tickets";
 import { usersRoute } from "./routes/users";
 import type { Env } from "./types";
 
-export { GameSessionDO, GameSessionDO as GameRoomDO, MatchmakerDO };
+export { GameSessionDO, MatchmakerDO };
 
 const app = new Hono<{
   Bindings: Env;
@@ -123,44 +123,14 @@ app.get("/ws/game/:gameId", async (c) => {
     );
   }
   const gameId = c.req.param("gameId");
-  const ns = c.env.GAME_SESSION_DO || c.env.GAME_ROOM_DO;
+  const ns = c.env.GAME_SESSION_DO;
   const id = ns.idFromName(gameId);
   const stub = ns.get(id);
   return stub.fetch(c.req.raw);
 });
 
-// 10. WebSocket Proxy to MatchmakerDO (/ws/user and legacy /ws/matchmaker)
+// 10. WebSocket Proxy to MatchmakerDO (/ws/user)
 app.get("/ws/user", async (c) => {
-  const origin = c.req.header("origin");
-  if (origin && !isAllowedOrigin(origin, c.env)) {
-    return c.json(
-      {
-        error: {
-          code: "FORBIDDEN",
-          message: "Cross-origin WebSocket connections from this origin are not allowed",
-        },
-      },
-      403,
-    );
-  }
-
-  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
-    return c.json(
-      {
-        error: {
-          code: "UPGRADE_REQUIRED",
-          message: "Expected WebSocket upgrade",
-        },
-      },
-      426,
-    );
-  }
-  const id = c.env.MATCHMAKER_DO.idFromName("global");
-  const stub = c.env.MATCHMAKER_DO.get(id);
-  return stub.fetch(c.req.raw);
-});
-
-app.get("/ws/matchmaker", async (c) => {
   const origin = c.req.header("origin");
   if (origin && !isAllowedOrigin(origin, c.env)) {
     return c.json(

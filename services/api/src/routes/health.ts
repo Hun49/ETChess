@@ -17,7 +17,7 @@ export async function handleReadyCheck(c: Context<{ Bindings: Env; Variables: Ho
     const d1Healthy = d1Result?.ok === 1;
 
     // 2. Check Durable Object namespace bindings exist
-    const hasGameDO = !!c.env.GAME_ROOM_DO;
+    const hasGameDO = !!c.env.GAME_SESSION_DO;
     const hasMatchmakerDO = !!c.env.MATCHMAKER_DO;
     const doHealthy = hasGameDO && hasMatchmakerDO;
 

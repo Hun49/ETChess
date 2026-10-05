@@ -112,7 +112,12 @@ export const adminRoute = new Hono<{
 
       await db
         .update(schema.reports)
-        .set({ status, details: notes ?? report.details })
+        .set({
+          status,
+          resolutionNotes: notes ?? null,
+          resolvedBy: admin.id,
+          resolvedAt: new Date(),
+        })
         .where(eq(schema.reports.id, id));
 
       await db.insert(schema.auditLogs).values({

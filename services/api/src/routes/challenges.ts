@@ -10,7 +10,7 @@ import {
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, gt, isNotNull, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import * as schema from "../db/schema";
 import { notifyUserChannel } from "../lib/notifier";
@@ -72,6 +72,30 @@ challengesRoute.post("/", zValidator("json", CreateChallengeSchema), async (c) =
   }
 
   const db = drizzle(c.env.DB, { schema });
+
+  // 1c. Cannot challenge a blocked user or if blocked by user (M11)
+  if (challengedId) {
+    const [blockRow] = await db
+      .select()
+      .from(schema.friends)
+      .where(
+        and(
+          or(
+            and(eq(schema.friends.userId, user.id), eq(schema.friends.friendId, challengedId)),
+            and(eq(schema.friends.userId, challengedId), eq(schema.friends.friendId, user.id)),
+          ),
+          eq(schema.friends.status, "blocked"),
+        ),
+      );
+
+    if (blockRow) {
+      return c.json(
+        { error: { code: "FORBIDDEN", message: "Cannot challenge a blocked user" } },
+        403,
+      );
+    }
+  }
+
   const now = new Date();
 
   // 2. RULE-08: Maximum pending outgoing challenges per user (5)
@@ -283,6 +307,38 @@ challengesRoute.post("/:id/accept", async (c) => {
     );
   }
 
+  // 1c. Block check: neither player may accept if a block exists between them (M11)
+  const [blockRow] = await db
+    .select()
+    .from(schema.friends)
+    .where(
+      and(
+        or(
+          and(
+            eq(schema.friends.userId, challenge.challengerId),
+            eq(schema.friends.friendId, user.id),
+          ),
+          and(
+            eq(schema.friends.userId, user.id),
+            eq(schema.friends.friendId, challenge.challengerId),
+          ),
+        ),
+        eq(schema.friends.status, "blocked"),
+      ),
+    );
+
+  if (blockRow) {
+    return c.json(
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "Cannot accept challenge due to a block between players",
+        },
+      },
+      403,
+    );
+  }
+
   // 2. Direct challenge addressee check
   if (challenge.challengedId && challenge.challengedId !== user.id) {
     return c.json(
@@ -348,9 +404,38 @@ challengesRoute.post("/:id/accept", async (c) => {
 
   const gameId = crypto.randomUUID();
 
-  // 6. Pre-initialize GameSessionDO
+  // 6. Atomically claim challenge in D1 via conditional compare-and-set (M11)
+  const updatedRows = await db
+    .update(schema.challenges)
+    .set({
+      status: "accepted",
+      challengedId: user.id,
+      gameId,
+    })
+    .where(
+      and(
+        eq(schema.challenges.id, challengeId),
+        eq(schema.challenges.status, "pending"),
+        gt(schema.challenges.expiresAt, now),
+      ),
+    )
+    .returning();
+
+  if (!updatedRows || updatedRows.length === 0) {
+    return c.json(
+      {
+        error: {
+          code: "CONFLICT",
+          message: "Challenge has already been accepted or is no longer pending",
+        },
+      },
+      409,
+    );
+  }
+
+  // 7. Pre-initialize GameSessionDO
   try {
-    const ns = c.env.GAME_SESSION_DO || c.env.GAME_ROOM_DO;
+    const ns = c.env.GAME_SESSION_DO;
     const sessionStub = ns.get(ns.idFromName(gameId));
     await sessionStub.fetch("http://internal/init", {
       method: "POST",
@@ -375,16 +460,6 @@ challengesRoute.post("/:id/accept", async (c) => {
   } catch (err) {
     console.error("Failed to pre-initialize GameSessionDO for challenge:", err);
   }
-
-  // 7. Update challenge in D1
-  await db
-    .update(schema.challenges)
-    .set({
-      status: "accepted",
-      challengedId: user.id, // In case of link challenge, record the user who accepted
-      gameId,
-    })
-    .where(eq(schema.challenges.id, challengeId));
 
   // 8. Notify challenger over /ws/user channel
   await notifyUserChannel(c.env, challenge.challengerId, {
@@ -461,3 +536,69 @@ challengesRoute.post("/:id/decline", async (c) => {
 
   return c.json({ success: true, status: "declined" });
 });
+
+/**
+ * POST /api/challenges/:id/cancel
+ * DELETE /api/challenges/:id
+ * Cancels a pending challenge initiated by the user.
+ */
+const handleCancelChallenge = async (
+  c: Context<{
+    Bindings: Env;
+    Variables: HonoVariables;
+  }>,
+) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ error: { code: "UNAUTHENTICATED", message: "User session required" } }, 401);
+  }
+
+  const challengeId = c.req.param("id");
+  if (!challengeId) {
+    return c.json({ error: { code: "VALIDATION_FAILED", message: "Challenge ID required" } }, 400);
+  }
+
+  const db = drizzle(c.env.DB, { schema });
+
+  const [challenge] = await db
+    .select()
+    .from(schema.challenges)
+    .where(eq(schema.challenges.id, challengeId));
+
+  if (!challenge) {
+    return c.json({ error: { code: "NOT_FOUND", message: "Challenge not found" } }, 404);
+  }
+
+  if (challenge.challengerId !== user.id) {
+    return c.json(
+      { error: { code: "FORBIDDEN", message: "Only the challenger can cancel this challenge" } },
+      403,
+    );
+  }
+
+  if (challenge.status !== "pending") {
+    return c.json({ error: { code: "CONFLICT", message: "Challenge is no longer pending" } }, 409);
+  }
+
+  await db
+    .update(schema.challenges)
+    .set({ status: "canceled" })
+    .where(eq(schema.challenges.id, challengeId));
+
+  if (challenge.challengedId) {
+    await notifyUserChannel(c.env, challenge.challengedId, {
+      v: PROTOCOL_VERSION,
+      type: "CHALLENGE_DECLINED",
+      serverTime: Date.now(),
+      payload: {
+        challengeId,
+        reason: "Canceled by challenger",
+      },
+    });
+  }
+
+  return c.json({ success: true, status: "canceled" });
+};
+
+challengesRoute.post("/:id/cancel", handleCancelChallenge);
+challengesRoute.delete("/:id", handleCancelChallenge);

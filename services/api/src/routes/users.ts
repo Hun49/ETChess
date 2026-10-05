@@ -7,6 +7,50 @@ import * as schema from "../db/schema";
 import { type HonoVariables, requireAuth } from "../middleware/session";
 import type { Env } from "../types";
 
+const DisallowedNames = new Set([
+  "admin",
+  "administrator",
+  "moderator",
+  "mod",
+  "system",
+  "support",
+  "official",
+  "etchess",
+  "et_chess",
+  "root",
+  "staff",
+  "bot",
+  "stockfish",
+]);
+
+const NameSchema = z
+  .string()
+  .trim()
+  .min(2, { message: "Username must be at least 2 characters" })
+  .max(30, { message: "Username must be at most 30 characters" })
+  .regex(/^[a-zA-Z0-9_-]+$/, {
+    message: "Username can only contain alphanumeric characters, underscores, and hyphens",
+  })
+  .refine((val) => !DisallowedNames.has(val.toLowerCase()), {
+    message: "This username is reserved and cannot be chosen",
+  });
+
+const ImageUrlSchema = z
+  .string()
+  .url()
+  .refine(
+    (url) => {
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "Image URL must use http or https protocol" },
+  )
+  .nullable();
+
 export const usersRoute = new Hono<{
   Bindings: Env;
   Variables: HonoVariables;
@@ -65,8 +109,8 @@ export const usersRoute = new Hono<{
     zValidator(
       "json",
       z.object({
-        name: z.string().min(2).max(32).optional(),
-        image: z.string().url().nullable().optional(),
+        name: NameSchema.optional(),
+        image: ImageUrlSchema.optional(),
       }),
     ),
     async (c) => {
