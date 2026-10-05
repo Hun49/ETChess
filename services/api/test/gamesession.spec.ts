@@ -74,7 +74,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
 
   it("plays a full Scholar's Mate checkmate game, broadcasts updates, and writes atomic batch to D1", async () => {
     const gameId = crypto.randomUUID();
-    const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+    const ns = env.GAME_SESSION_DO;
     const sessionDO = ns.get(ns.idFromName(gameId));
 
     // 1. Initialize session
@@ -212,7 +212,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
 
   it("handles draw offer and agreement", async () => {
     const gameId = crypto.randomUUID();
-    const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+    const ns = env.GAME_SESSION_DO;
     const sessionDO = ns.get(ns.idFromName(gameId));
 
     await sessionDO.fetch("http://internal/init", {
@@ -298,7 +298,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
 
   it("handles resignation cleanly", async () => {
     const gameId = crypto.randomUUID();
-    const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+    const ns = env.GAME_SESSION_DO;
     const sessionDO = ns.get(ns.idFromName(gameId));
 
     await sessionDO.fetch("http://internal/init", {
@@ -348,7 +348,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
 
   it("handles first-move deadline abort via Durable Object alarm (RULE-01)", async () => {
     const gameId = crypto.randomUUID();
-    const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+    const ns = env.GAME_SESSION_DO;
     const sessionDO = ns.get(ns.idFromName(gameId));
 
     await sessionDO.fetch("http://internal/init", {
@@ -382,7 +382,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
 
   it("supports takebacks in casual friend matches (RULE-10)", async () => {
     const gameId = crypto.randomUUID();
-    const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+    const ns = env.GAME_SESSION_DO;
     const sessionDO = ns.get(ns.idFromName(gameId));
 
     await sessionDO.fetch("http://internal/init", {

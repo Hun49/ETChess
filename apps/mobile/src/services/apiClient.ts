@@ -1,4 +1,7 @@
 import type { TimeControlId } from "@etchess/types";
+import * as SecureStore from "expo-secure-store";
+
+const TOKEN_STORAGE_KEY = "etchess_session_token";
 
 export interface ApiUser {
   id: string;
@@ -75,19 +78,48 @@ declare const process:
 export class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
+  private tokenInitialized = false;
 
   constructor(baseUrl?: string) {
+    const defaultUrl =
+      typeof process !== "undefined" && process?.env?.NODE_ENV === "production"
+        ? "https://api.etchess.io"
+        : "http://localhost:8787";
     this.baseUrl =
       baseUrl ||
       (typeof process !== "undefined" && process?.env?.EXPO_PUBLIC_API_URL) ||
-      "http://localhost:8787";
+      defaultUrl;
   }
 
   public setToken(token: string | null) {
     this.token = token;
+    try {
+      if (token) {
+        SecureStore.setItemAsync(TOKEN_STORAGE_KEY, token).catch(() => {});
+      } else {
+        SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY).catch(() => {});
+      }
+    } catch {
+      // In-memory fallback
+    }
   }
 
   public getToken(): string | null {
+    return this.token;
+  }
+
+  public async restoreToken(): Promise<string | null> {
+    try {
+      const isAvailable = await SecureStore.isAvailableAsync();
+      if (isAvailable) {
+        const stored = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+        if (stored) {
+          this.token = stored;
+        }
+      }
+    } catch {
+      // In-memory fallback
+    }
     return this.token;
   }
 
@@ -104,7 +136,6 @@ export class ApiClient {
 
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`;
-      headers.Cookie = `better-auth.session_token=${this.token}`;
     }
 
     const response = await fetch(url, {
@@ -137,7 +168,7 @@ export class ApiClient {
     const data = await this.request<{ user: ApiUser; token: string }>("/api/auth/guest", {
       method: "POST",
     });
-    this.token = data.token;
+    await this.setToken(data.token);
     return data;
   }
 

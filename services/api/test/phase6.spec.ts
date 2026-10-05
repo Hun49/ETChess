@@ -283,7 +283,7 @@ describe("Phase 6 — Friends & Challenges Integration", () => {
     }
 
     // 5. Verify GameSessionDO was pre-initialized and ready for both players
-    const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+    const ns = env.GAME_SESSION_DO;
     const sessionStub = ns.get(ns.idFromName(acceptData.gameId));
     const stateRes = await sessionStub.fetch("http://internal/state");
     expect(stateRes.status).toBe(200);

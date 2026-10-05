@@ -33,9 +33,12 @@ export class RealtimeClient {
   private gamePingInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(wsBaseUrl?: string) {
+    const defaultHttpUrl =
+      typeof process !== "undefined" && process?.env?.NODE_ENV === "production"
+        ? "https://api.etchess.io"
+        : "http://localhost:8787";
     const defaultUrl =
-      (typeof process !== "undefined" && process?.env?.EXPO_PUBLIC_API_URL) ||
-      "http://localhost:8787";
+      (typeof process !== "undefined" && process?.env?.EXPO_PUBLIC_API_URL) || defaultHttpUrl;
     this.wsBaseUrl = wsBaseUrl || defaultUrl.replace(/^http/, "ws");
   }
 

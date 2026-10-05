@@ -6,7 +6,7 @@
     "jsx": "react-jsx",
     "declaration": false,
     "declarationMap": false,
-    "types": ["@cloudflare/workers-types/latest"]
+    "types": ["vite/client", "@cloudflare/workers-types/latest"]
   },
   "include": ["src/**/*", "vite.config.ts"]
 }

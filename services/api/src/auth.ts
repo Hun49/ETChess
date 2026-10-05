@@ -23,6 +23,13 @@ export function createAuth(env: Env) {
     onAPIError: {
       throw: false,
     },
+    advanced: {
+      useSecureCookies: env.ENVIRONMENT === "production",
+    },
+    rateLimit: {
+      window: 60,
+      max: 30,
+    },
     emailAndPassword: {
       enabled: true,
     },

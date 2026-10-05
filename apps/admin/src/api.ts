@@ -8,7 +8,7 @@ import type {
   SystemHealthStatus,
 } from "./types.js";
 
-const API_BASE = "";
+const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {

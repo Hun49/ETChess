@@ -3,8 +3,8 @@ declare global {
     interface Env {
       DB: D1Database;
       GAME_SESSION_DO: DurableObjectNamespace;
-      GAME_ROOM_DO?: DurableObjectNamespace;
       MATCHMAKER_DO: DurableObjectNamespace;
+      AVATARS_BUCKET?: R2Bucket;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       WS_TICKET_SECRET?: string;

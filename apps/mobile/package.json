@@ -19,6 +19,7 @@
     "@etchess/types": "workspace:*",
     "chess.js": "^1.0.0-beta.6",
     "expo": "~52.0.0",
+    "expo-secure-store": "^57.0.4",
     "expo-status-bar": "~2.0.0",
     "lucide-react-native": "^0.475.0",
     "react": "18.3.1",

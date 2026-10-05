@@ -37,9 +37,9 @@ const NameSchema = z
 
 const ImageUrlSchema = z
   .string()
-  .url()
   .refine(
     (url) => {
+      if (url.startsWith("/api/")) return true;
       try {
         const parsed = new URL(url);
         return parsed.protocol === "http:" || parsed.protocol === "https:";
@@ -47,7 +47,7 @@ const ImageUrlSchema = z
         return false;
       }
     },
-    { message: "Image URL must use http or https protocol" },
+    { message: "Image URL must be a valid http/https URL or an internal /api/ path" },
   )
   .nullable();
 
@@ -55,6 +55,161 @@ export const usersRoute = new Hono<{
   Bindings: Env;
   Variables: HonoVariables;
 }>()
+  // Upload user avatar to R2 storage
+  .post("/avatar", requireAuth, async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      return c.json(
+        {
+          error: {
+            code: "UNAUTHENTICATED",
+            message: "Authentication required",
+          },
+        },
+        401,
+      );
+    }
+
+    if (!c.env.AVATARS_BUCKET) {
+      return c.json(
+        {
+          error: {
+            code: "SERVICE_UNAVAILABLE",
+            message: "Avatar storage service is not configured",
+          },
+        },
+        503,
+      );
+    }
+
+    const contentType = c.req.header("content-type") || "";
+    if (!contentType.includes("multipart/form-data")) {
+      return c.json(
+        {
+          error: {
+            code: "BAD_REQUEST",
+            message: "Content-Type must be multipart/form-data",
+          },
+        },
+        400,
+      );
+    }
+
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!file || typeof file === "string") {
+      return c.json(
+        {
+          error: {
+            code: "BAD_REQUEST",
+            message: "No file uploaded under key 'file'",
+          },
+        },
+        400,
+      );
+    }
+
+    // Supported formats: JPEG, PNG, WebP
+    const allowedMimeTypes: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+    };
+
+    const ext = allowedMimeTypes[file.type];
+    if (!ext) {
+      return c.json(
+        {
+          error: {
+            code: "INVALID_FILE_TYPE",
+            message: "Avatar must be a JPEG, PNG, or WebP image",
+          },
+        },
+        400,
+      );
+    }
+
+    // Max file size: 2MB (2 * 1024 * 1024 bytes)
+    const MAX_SIZE = 2 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      return c.json(
+        {
+          error: {
+            code: "PAYLOAD_TOO_LARGE",
+            message: "Avatar image must be under 2MB",
+          },
+        },
+        413,
+      );
+    }
+
+    const key = `avatars/${user.id}.${ext}`;
+    const arrayBuffer = await file.arrayBuffer();
+    await c.env.AVATARS_BUCKET.put(key, arrayBuffer, {
+      httpMetadata: {
+        contentType: file.type,
+      },
+    });
+
+    const avatarUrl = `/api/users/avatar/${user.id}`;
+    const db = drizzle(c.env.DB, { schema });
+    await db
+      .update(schema.user)
+      .set({ image: avatarUrl, updatedAt: new Date() })
+      .where(eq(schema.user.id, user.id));
+
+    return c.json({
+      success: true,
+      avatarUrl,
+    });
+  })
+
+  // Fetch user avatar from R2 storage
+  .get("/avatar/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!c.env.AVATARS_BUCKET) {
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Avatar storage not configured",
+          },
+        },
+        404,
+      );
+    }
+
+    // Check possible extensions: webp, png, jpg
+    const candidates = [`avatars/${id}.webp`, `avatars/${id}.png`, `avatars/${id}.jpg`];
+    let object = null;
+    for (const key of candidates) {
+      object = await c.env.AVATARS_BUCKET.get(key);
+      if (object) break;
+    }
+
+    if (!object) {
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Avatar not found",
+          },
+        },
+        404,
+      );
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("Cache-Control", "public, max-age=86400, stale-while-revalidate=3600");
+    if (object.httpEtag) {
+      headers.set("ETag", object.httpEtag);
+    }
+
+    return new Response(object.body, { headers });
+  })
+
   // Current authenticated user profile
   .get("/me", requireAuth, async (c) => {
     const user = c.get("user");

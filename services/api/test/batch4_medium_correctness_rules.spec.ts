@@ -45,7 +45,7 @@ describe("Batch 4 Medium Correctness & Lifecycle Audits (M1–M4)", () => {
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -167,7 +167,7 @@ describe("Batch 4 Medium Correctness & Lifecycle Audits (M1–M4)", () => {
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -281,7 +281,7 @@ describe("Batch 4 Medium Correctness & Lifecycle Audits (M1–M4)", () => {
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -387,7 +387,7 @@ describe("Batch 4 Medium Correctness & Lifecycle Audits (M1–M4)", () => {
   describe("M3 & M4: Timer Strictness & Atomic Storage", () => {
     it("persists gameState and timers in an atomic transaction", async () => {
       const gameId = crypto.randomUUID();
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       const initRes = await sessionDO.fetch("http://internal/init", {

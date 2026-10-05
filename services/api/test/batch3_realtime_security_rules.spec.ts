@@ -45,7 +45,7 @@ describe("Batch 3 Realtime Connections, Security & Robustness Audits (H4–H10)"
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -146,7 +146,7 @@ describe("Batch 3 Realtime Connections, Security & Robustness Audits (H4–H10)"
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -233,7 +233,7 @@ describe("Batch 3 Realtime Connections, Security & Robustness Audits (H4–H10)"
     it("rejects user-scope ticket presented on game socket", async () => {
       const gameId = crypto.randomUUID();
       const userId = `h6_u_${Date.now()}`;
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -346,7 +346,7 @@ describe("Batch 3 Realtime Connections, Security & Robustness Audits (H4–H10)"
   describe("H7: Frame Caps, Rate Limiting & WebSocket Abuse Prevention", () => {
     it("drops connection with code 1009 when WebSocket frame exceeds 16KB", async () => {
       const gameId = crypto.randomUUID();
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {

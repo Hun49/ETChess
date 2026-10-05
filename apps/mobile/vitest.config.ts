@@ -9,6 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "react-native": path.resolve(__dirname, "./test/mocks/react-native.ts"),
+      "expo-secure-store": path.resolve(__dirname, "./test/mocks/expo-secure-store.ts"),
     },
   },
 });

@@ -49,7 +49,7 @@ describe("Batch 2 High Priority Audits & Regression Tests (H1–H3)", () => {
       ]);
 
       const gameId = crypto.randomUUID();
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       // 1. Initialize bullet game (1+0)
@@ -213,7 +213,7 @@ describe("Batch 2 High Priority Audits & Regression Tests (H1–H3)", () => {
       expect(whiteEstablished.games).toBe(50);
 
       const gameId = crypto.randomUUID();
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -324,7 +324,7 @@ describe("Batch 2 High Priority Audits & Regression Tests (H1–H3)", () => {
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       await sessionDO.fetch("http://internal/init", {
@@ -415,7 +415,7 @@ describe("Batch 2 High Priority Audits & Regression Tests (H1–H3)", () => {
         { userId: blackUserId, updatedAt: now },
       ]);
 
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const sessionDO = ns.get(ns.idFromName(gameId));
 
       // Initialize game directly at half-move clock 99 with legal position

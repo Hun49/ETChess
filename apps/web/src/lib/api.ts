@@ -3,7 +3,9 @@ import { emailOTPClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { hc } from "hono/client";
 
-const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+const origin =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
 
 export const authClient = createAuthClient({
   baseURL: origin,

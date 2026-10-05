@@ -192,7 +192,7 @@ describe("Phase 5 — MatchmakerDO & Matchmaking Pools", () => {
       expect(match1.payload.color).not.toBe(match2.payload.color);
 
       // Verify GameSessionDO was pre-initialized in storage
-      const ns = env.GAME_SESSION_DO || env.GAME_ROOM_DO;
+      const ns = env.GAME_SESSION_DO;
       const gameId = match1.payload.gameId;
       const sessionStub = ns.get(ns.idFromName(gameId));
       const stateRes = await sessionStub.fetch("http://internal/state");
