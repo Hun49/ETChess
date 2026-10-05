@@ -403,6 +403,56 @@ export class MatchmakerDO extends DurableObject<Env> {
       return Response.json({ success: true });
     }
 
+    // 5. Query user active game status (for RATE-11 and admin rating adjustment checks)
+    if (url.pathname.includes("/user-active-game/") && request.method === "GET") {
+      const parts = url.pathname.split("/");
+      const targetUserId = parts[parts.length - 1];
+      const gameId = this.activePlayerGames.get(targetUserId) || null;
+      return Response.json({
+        active: Boolean(gameId),
+        gameId,
+      });
+    }
+
+    // 6. Query all active live games & online user count (for Admin Dashboard)
+    if (url.pathname.endsWith("/active-games") && request.method === "GET") {
+      const gameIds = Array.from(new Set(this.activePlayerGames.values()));
+      const onlineCount = this.ctx.getWebSockets().filter((ws) => {
+        const att = ws.deserializeAttachment() as UserSocketAttachment | null;
+        return Boolean(att?.authenticated);
+      }).length;
+      return Response.json({
+        gameIds,
+        onlineCount,
+      });
+    }
+
+    // 7. Clear specific active game lock
+    if (url.pathname.endsWith("/clear-active-game") && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as {
+        gameId?: string;
+        userId?: string;
+      };
+      if (body.userId) {
+        this.activePlayerGames.delete(body.userId);
+      }
+      if (body.gameId) {
+        for (const [uid, gid] of this.activePlayerGames.entries()) {
+          if (gid === body.gameId) {
+            this.activePlayerGames.delete(uid);
+          }
+        }
+      }
+      return Response.json({ success: true });
+    }
+
+    // 8. Set active game lock (for pairing or testing)
+    if (url.pathname.endsWith("/set-active-game") && request.method === "POST") {
+      const body = (await request.json()) as { userId: string; gameId: string };
+      this.activePlayerGames.set(body.userId, body.gameId);
+      return Response.json({ success: true });
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 

@@ -369,7 +369,47 @@ export class GameSessionDO extends DurableObject<Env> {
       return Response.json({ success: true, persistedToD1: state.persistedToD1 });
     }
 
-    // 3. WebSocket Connection Upgrade
+    // 4. HTTP Game State Query (for admin live games inspector)
+    if (url.pathname.endsWith("/state") && request.method === "GET") {
+      const state = await this.loadState();
+      if (!state) return new Response("Game Not Found", { status: 404 });
+      return Response.json(state);
+    }
+
+    // 5. HTTP Admin Terminate Endpoint
+    if (url.pathname.endsWith("/terminate") && request.method === "POST") {
+      const state = await this.loadState();
+      if (!state) return new Response("Game Not Found", { status: 404 });
+      const body = (await request.json().catch(() => ({}))) as { reason?: string };
+
+      if (state.status === "active") {
+        state.status = "ended";
+        state.termination = "admin_intervention";
+        state.winnerRole = undefined;
+        await this.finalizeGame();
+        await this.persistState();
+
+        const termFrame: ServerGameFrame = {
+          v: PROTOCOL_VERSION,
+          type: "GAME_TERMINATED",
+          payload: {
+            result: "1/2-1/2",
+            termination: "admin_intervention",
+          },
+        };
+        this.broadcast(termFrame);
+        for (const s of this.ctx.getWebSockets()) {
+          try {
+            s.close(1000, "Terminated by administrator");
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return Response.json({ success: true, status: state.status });
+    }
+
+    // 6. WebSocket Connection Upgrade
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       const state = await this.loadState();
       if (!state) {

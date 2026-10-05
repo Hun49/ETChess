@@ -2,7 +2,7 @@ import { PRODUCT_RULES } from "@etchess/types";
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import * as schema from "../db/schema";
 import { type HonoVariables, requireAuth } from "../middleware/session";
@@ -85,19 +85,25 @@ friendsRoute.get("/", async (c) => {
 const FriendRequestSchema = z.object({
   username: z.string().optional(),
   targetUserId: z.string().optional(),
+  addresseeId: z.string().optional(),
 });
 
-/**
- * POST /api/friends/requests
- * Sends a friend request (capped at 200 friends, RULE-14).
- */
-friendsRoute.post("/requests", zValidator("json", FriendRequestSchema), async (c) => {
+type FriendsContext = Context<{
+  Bindings: Env;
+  Variables: HonoVariables;
+}>;
+
+const processFriendRequest = async (
+  c: FriendsContext,
+  data: z.infer<typeof FriendRequestSchema>,
+) => {
   const user = c.get("user");
   if (!user) {
     return c.json({ error: { code: "UNAUTHENTICATED", message: "User session required" } }, 401);
   }
 
-  const { username, targetUserId } = c.req.valid("json");
+  const { username, targetUserId: rawTargetUserId, addresseeId } = data;
+  const targetUserId = rawTargetUserId || addresseeId;
   if (!username && !targetUserId) {
     return c.json(
       {
@@ -195,6 +201,7 @@ friendsRoute.post("/requests", zValidator("json", FriendRequestSchema), async (c
 
   return c.json(
     {
+      success: true,
       friendship: {
         id: newFriendshipId,
         friendId: targetUser.id,
@@ -204,7 +211,18 @@ friendsRoute.post("/requests", zValidator("json", FriendRequestSchema), async (c
     },
     201,
   );
-});
+};
+
+/**
+ * POST /api/friends/requests and POST /api/friends/request
+ * Sends a friend request (capped at 200 friends, RULE-14).
+ */
+friendsRoute.post("/requests", zValidator("json", FriendRequestSchema), (c) =>
+  processFriendRequest(c, c.req.valid("json")),
+);
+friendsRoute.post("/request", zValidator("json", FriendRequestSchema), (c) =>
+  processFriendRequest(c, c.req.valid("json")),
+);
 
 /**
  * POST /api/friends/requests/:id/accept

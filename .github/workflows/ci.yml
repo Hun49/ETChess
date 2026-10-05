@@ -12,12 +12,14 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Lint, Typecheck, and Test
+    name: Lint, Typecheck, Test, and Build
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -41,3 +43,8 @@ jobs:
 
       - name: Run automated test suite
         run: pnpm test
+
+      - name: Build Web and Admin applications
+        run: |
+          pnpm --filter @etchess/admin build
+          pnpm --filter @etchess/web build
