@@ -18,6 +18,67 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  apps/admin:
+    dependencies:
+      '@etchess/api':
+        specifier: workspace:*
+        version: link:../../services/api
+      '@etchess/assets':
+        specifier: workspace:*
+        version: link:../../packages/assets
+      '@etchess/chess-core':
+        specifier: workspace:*
+        version: link:../../packages/chess-core
+      '@etchess/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      better-auth:
+        specifier: ^1.2.0
+        version: 1.7.7(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@4.1.11(@types/node@26.6.4)(vite@6.4.3(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)))
+      chess.js:
+        specifier: ^1.0.0-beta.6
+        version: 1.4.0
+      lucide-react:
+        specifier: ^1.50.0
+        version: 1.50.0(@types/react@19.3.0)(react@19.3.0)
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
+      react-chessboard:
+        specifier: ^5.12.1
+        version: 5.12.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.3.0(react@19.3.0)
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250224.0
+        version: 4.20260702.1
+      '@etchess/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@tailwindcss/vite':
+        specifier: ^4.0.0
+        version: 4.3.3(vite@6.4.3(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2))
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@6.4.3(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2))
+      tailwindcss:
+        specifier: ^4.0.0
+        version: 4.3.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vite:
+        specifier: ^6.1.0
+        version: 6.4.3(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)
+
   apps/mobile:
     dependencies:
       '@etchess/bot-engine':
@@ -148,6 +209,18 @@ importers:
       vite:
         specifier: ^6.1.0
         version: 6.4.3(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)
+
+  packages/assets:
+    devDependencies:
+      '@etchess/config':
+        specifier: workspace:*
+        version: link:../config
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@10.2.2)(terser@5.51.2)
 
   packages/bot-engine:
     dependencies:
