@@ -780,7 +780,7 @@ function handleBotMoveReceived(
 }
 
 /**
- * Connects to live GameRoomDO WebSocket
+ * Connects to live GameSessionDO WebSocket
  */
 function connectToOnlineGame(
   gameId: string,

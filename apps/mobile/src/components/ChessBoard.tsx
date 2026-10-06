@@ -1,4 +1,4 @@
-import type { Square } from "chess.js";
+import type { Square } from "@etchess/chess-core";
 import type React from "react";
 import { useMemo, useState } from "react";
 import { Dimensions, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";

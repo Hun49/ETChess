@@ -1,5 +1,5 @@
+import { Chess } from "@etchess/chess-core";
 import { TIME_CONTROLS, type TimeControlId } from "@etchess/types";
-import { Chess } from "chess.js";
 import { create } from "zustand";
 import { api } from "../services/apiClient";
 import { haptics } from "../services/haptics";

@@ -1,5 +1,5 @@
 import type { EngineTransport } from "@etchess/bot-engine";
-import { Chess } from "chess.js";
+import { Chess } from "@etchess/chess-core";
 
 // Piece values in centipawns
 const PIECE_VALUES: Record<string, number> = {
