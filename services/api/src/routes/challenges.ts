@@ -71,6 +71,30 @@ challengesRoute.post("/", zValidator("json", CreateChallengeSchema), async (c) =
     );
   }
 
+  // 1d. Prevent creating challenge while in an active live game (H10)
+  if (c.env.MATCHMAKER_DO) {
+    try {
+      const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
+      const checkRes = await mmStub.fetch(`http://internal/user-active-game/${user.id}`);
+      if (checkRes.ok) {
+        const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
+        if (checkData.active) {
+          return c.json(
+            {
+              error: {
+                code: "ALREADY_IN_GAME",
+                message: `You are already playing game ${checkData.gameId}. Finish or resign before creating a challenge.`,
+              },
+            },
+            409,
+          );
+        }
+      }
+    } catch {
+      // Best-effort check
+    }
+  }
+
   const db = drizzle(c.env.DB, { schema });
 
   // 1c. Cannot challenge a blocked user or if blocked by user (M11)
@@ -251,6 +275,20 @@ challengesRoute.get("/:id", async (c) => {
     return c.json({ error: { code: "NOT_FOUND", message: "Challenge not found" } }, 404);
   }
 
+  const user = c.get("user");
+  // IDOR check: direct challenges with a specific addressee can only be viewed by the participants
+  if (
+    challenge.challengedId &&
+    user &&
+    challenge.challengedId !== user.id &&
+    challenge.challengerId !== user.id
+  ) {
+    return c.json(
+      { error: { code: "FORBIDDEN", message: "Unauthorized to view this direct challenge" } },
+      403,
+    );
+  }
+
   // Check if expired
   const now = new Date();
   if (challenge.status === "pending" && challenge.expiresAt < now) {
@@ -294,7 +332,22 @@ challengesRoute.post("/:id/accept", async (c) => {
     );
   }
 
-  // 1b. Disallow guests from accepting rated challenges (H8)
+  // 1b. Status and expiration check
+  const now = new Date();
+  if (challenge.status !== "pending" || challenge.expiresAt < now) {
+    if (challenge.status === "pending") {
+      await db
+        .update(schema.challenges)
+        .set({ status: "expired" })
+        .where(eq(schema.challenges.id, challengeId));
+    }
+    return c.json(
+      { error: { code: "CONFLICT", message: "Challenge has expired or is no longer pending" } },
+      409,
+    );
+  }
+
+  // 1c. Disallow guests from accepting rated challenges (H8)
   if (challenge.rated && user.role === "guest") {
     return c.json(
       {
@@ -307,7 +360,7 @@ challengesRoute.post("/:id/accept", async (c) => {
     );
   }
 
-  // 1c. Block check: neither player may accept if a block exists between them (M11)
+  // 1d. Block check: neither player may accept if a block exists between them (M11)
   const [blockRow] = await db
     .select()
     .from(schema.friends)
@@ -352,19 +405,54 @@ challengesRoute.post("/:id/accept", async (c) => {
     );
   }
 
-  // 3. Status and expiration check
-  const now = new Date();
-  if (challenge.status !== "pending" || challenge.expiresAt < now) {
-    if (challenge.status === "pending") {
-      await db
-        .update(schema.challenges)
-        .set({ status: "expired" })
-        .where(eq(schema.challenges.id, challengeId));
+  // 2b. Prevent accepting challenge while in an active live game (H10)
+  if (c.env.MATCHMAKER_DO) {
+    try {
+      const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
+      const checkRes = await mmStub.fetch(`http://internal/user-active-game/${user.id}`);
+      if (checkRes.ok) {
+        const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
+        if (checkData.active) {
+          return c.json(
+            {
+              error: {
+                code: "ALREADY_IN_GAME",
+                message: `You are already playing game ${checkData.gameId}. Finish or resign before accepting a challenge.`,
+              },
+            },
+            409,
+          );
+        }
+      }
+    } catch {
+      // Best-effort check
     }
-    return c.json(
-      { error: { code: "CONFLICT", message: "Challenge has expired or is no longer pending" } },
-      409,
-    );
+  }
+
+  // 2c. Prevent accepting if challenger is currently in an active live game
+  if (c.env.MATCHMAKER_DO) {
+    try {
+      const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
+      const checkRes = await mmStub.fetch(
+        `http://internal/user-active-game/${challenge.challengerId}`,
+      );
+      if (checkRes.ok) {
+        const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
+        if (checkData.active) {
+          return c.json(
+            {
+              error: {
+                code: "OPPONENT_IN_GAME",
+                message: "The challenger is currently in another live game.",
+              },
+            },
+            409,
+          );
+        }
+      }
+    } catch {
+      // Best-effort check
+    }
   }
 
   // 4. Resolve player details and ratings
@@ -459,6 +547,27 @@ challengesRoute.post("/:id/accept", async (c) => {
     });
   } catch (err) {
     console.error("Failed to pre-initialize GameSessionDO for challenge:", err);
+  }
+
+  // Register active game lock in MatchmakerDO for both players (H10 / RATE-11)
+  if (c.env.MATCHMAKER_DO) {
+    try {
+      const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
+      await Promise.all([
+        mmStub.fetch("http://internal/set-active-game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: whiteUserId, gameId }),
+        }),
+        mmStub.fetch("http://internal/set-active-game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: blackUserId, gameId }),
+        }),
+      ]);
+    } catch {
+      // Best-effort
+    }
   }
 
   // 8. Notify challenger over /ws/user channel

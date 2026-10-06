@@ -426,7 +426,27 @@ export class MatchmakerDO extends DurableObject<Env> {
       const parts = url.pathname.split("/");
       const targetUserId = parts[parts.length - 1];
       const activeGames = await this.loadActivePlayerGames();
-      const gameId = activeGames.get(targetUserId) || null;
+      let gameId = activeGames.get(targetUserId) || null;
+
+      if (gameId && this.env.GAME_SESSION_DO) {
+        try {
+          const sessionDO = this.env.GAME_SESSION_DO.get(
+            this.env.GAME_SESSION_DO.idFromName(gameId),
+          );
+          const stateRes = await sessionDO.fetch("http://internal/state");
+          if (stateRes.ok) {
+            const sessionState = (await stateRes.json()) as { status: string };
+            if (sessionState.status === "finished" || sessionState.status === "finalized") {
+              activeGames.delete(targetUserId);
+              await this.persistActivePlayerGames();
+              gameId = null;
+            }
+          }
+        } catch {
+          // Session unreachable
+        }
+      }
+
       return Response.json({
         active: Boolean(gameId),
         gameId,
@@ -463,6 +483,9 @@ export class MatchmakerDO extends DurableObject<Env> {
             activeGames.delete(uid);
           }
         }
+      }
+      if (!body.userId && !body.gameId) {
+        activeGames.clear();
       }
       await this.persistActivePlayerGames();
       return Response.json({ success: true });

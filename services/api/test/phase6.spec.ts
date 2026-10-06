@@ -298,6 +298,9 @@ describe("Phase 6 — Friends & Challenges Integration", () => {
 
     aliceWs.close();
     bobWs.close();
+
+    const mmStub = env.MATCHMAKER_DO.get(env.MATCHMAKER_DO.idFromName("global"));
+    await mmStub.fetch("http://internal/clear-active-game", { method: "POST" });
   });
 
   it("handles open shareable link challenge creation and acceptance", async () => {
@@ -342,6 +345,9 @@ describe("Phase 6 — Friends & Challenges Integration", () => {
   it("enforces RULE-08: maximum 5 pending outgoing challenges limit", async () => {
     const db = drizzle(env.DB, { schema });
     await db.delete(schema.challenges).where(eq(schema.challenges.challengerId, "p6-user-1"));
+
+    const mmStub = env.MATCHMAKER_DO.get(env.MATCHMAKER_DO.idFromName("global"));
+    await mmStub.fetch("http://internal/clear-active-game", { method: "POST" });
 
     // Alice creates 5 challenges
     for (let i = 0; i < 5; i++) {
