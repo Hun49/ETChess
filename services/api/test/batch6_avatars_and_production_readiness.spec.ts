@@ -115,6 +115,24 @@ describe("Batch 6: Avatars, R2 Storage & Production Readiness", () => {
       expect(json.error.code).toBe("PAYLOAD_TOO_LARGE");
     });
 
+    it("rejects spoofed image file with invalid magic bytes with 400", async () => {
+      // Content is HTML/text disguised with image/png Content-Type
+      const fakePng = new TextEncoder().encode("<script>alert('xss')</script>");
+      const form = new FormData();
+      form.append("file", new File([fakePng], "avatar.png", { type: "image/png" }));
+
+      const res = await request("/api/users/avatar", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: form,
+      });
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as ApiErrorResponse;
+      expect(json.error.code).toBe("INVALID_FILE_SIGNATURE");
+    });
+
     it("successfully uploads valid WebP/PNG image and updates user profile", async () => {
       const pngBytes = new Uint8Array([
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
@@ -160,6 +178,26 @@ describe("Batch 6: Avatars, R2 Storage & Production Readiness", () => {
       expect(bodyBytes.length).toBeGreaterThan(0);
       expect(bodyBytes[0]).toBe(137); // PNG magic byte
       expect(bodyBytes[1]).toBe(80);
+    });
+  });
+
+  describe("DELETE /api/users/avatar", () => {
+    it("deletes user avatar from R2 and sets user image to null", async () => {
+      const delRes = await request("/api/users/avatar", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      expect(delRes.status).toBe(200);
+
+      // Verify D1 record has null image
+      const [userRow] = await db.select().from(schema.user).where(eq(schema.user.id, testUserId));
+      expect(userRow.image).toBeNull();
+
+      // Verify GET /avatar/:id returns 404 now
+      const getRes = await request(`/api/users/avatar/${testUserId}`);
+      expect(getRes.status).toBe(404);
     });
   });
 
