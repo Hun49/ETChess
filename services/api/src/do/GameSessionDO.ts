@@ -384,6 +384,7 @@ export class GameSessionDO extends DurableObject<Env> {
 
       if (state.status === "active") {
         state.status = "ended";
+        state.result = "aborted";
         state.termination = "admin_intervention";
         state.winnerRole = undefined;
         await this.finalizeGame();
@@ -393,7 +394,7 @@ export class GameSessionDO extends DurableObject<Env> {
           v: PROTOCOL_VERSION,
           type: "GAME_TERMINATED",
           payload: {
-            result: "1/2-1/2",
+            result: "aborted",
             termination: "admin_intervention",
           },
         };
@@ -1012,10 +1013,18 @@ export class GameSessionDO extends DurableObject<Env> {
     if (!state || state.status !== "active") return;
     if (attachment.role !== "white" && attachment.role !== "black") return;
 
-    state.status = "ended";
-    state.winnerRole = attachment.role === "white" ? "black" : "white";
-    state.result = attachment.role === "white" ? "0-1" : "1-0";
-    state.termination = "resignation";
+    if (state.ply < 2) {
+      // GAME-14 / GAME-40: Resignation before both players have made a move aborts the game without rating change
+      state.status = "aborted";
+      state.result = "aborted";
+      state.termination = "abandoned";
+      state.winnerRole = undefined;
+    } else {
+      state.status = "ended";
+      state.winnerRole = attachment.role === "white" ? "black" : "white";
+      state.result = attachment.role === "white" ? "0-1" : "1-0";
+      state.termination = "resignation";
+    }
 
     await this.persistState();
     await this.finalizeGame();
@@ -1164,11 +1173,19 @@ export class GameSessionDO extends DurableObject<Env> {
     const state = await this.loadState();
     if (!state || state.status !== "active") return;
 
-    const resolution = resolveTimeout(state.fen, flaggedColor);
-    state.status = "ended";
-    state.result = resolution.result;
-    state.winnerRole = resolution.winnerRole;
-    state.termination = resolution.termination;
+    if (state.ply < 2) {
+      // GAME-14: Timeout before both players have made a move aborts the game without rating change
+      state.status = "aborted";
+      state.result = "aborted";
+      state.termination = "abandoned";
+      state.winnerRole = undefined;
+    } else {
+      const resolution = resolveTimeout(state.fen, flaggedColor);
+      state.status = "ended";
+      state.result = resolution.result;
+      state.winnerRole = resolution.winnerRole;
+      state.termination = resolution.termination;
+    }
 
     if (flaggedColor === "white") {
       state.whiteMs = 0;
@@ -1239,7 +1256,9 @@ export class GameSessionDO extends DurableObject<Env> {
       whiteElo: state.whitePlayer.rating,
       blackElo: state.blackPlayer.rating,
       timeControl: state.timeControl,
-      result: (state.result as "1-0" | "0-1" | "1/2-1/2" | "*") || "*",
+      result:
+        (state.result === "aborted" ? "*" : (state.result as "1-0" | "0-1" | "1/2-1/2" | "*")) ||
+        "*",
       termination: state.termination,
       moves: state.moves,
     });
@@ -1249,10 +1268,30 @@ export class GameSessionDO extends DurableObject<Env> {
       try {
         const db = drizzle(this.env.DB, { schema });
 
+        // Idempotency check: verify whether this game record already exists in D1
+        const [existingGame] = await db
+          .select({ id: schema.games.id })
+          .from(schema.games)
+          .where(eq(schema.games.id, state.gameId));
+
+        if (existingGame) {
+          // Game was already written to D1; do NOT re-apply rating changes!
+          state.persistedToD1 = true;
+          state.finalized = true;
+          await this.persistState();
+          return;
+        }
+
         let whiteUpdateSet: Record<string, unknown> | null = null;
         let blackUpdateSet: Record<string, unknown> | null = null;
 
-        if (state.rated && state.whiteRatingAfter != null && state.blackRatingAfter != null) {
+        if (
+          state.rated &&
+          state.status === "ended" &&
+          state.result !== "aborted" &&
+          state.whiteRatingAfter != null &&
+          state.blackRatingAfter != null
+        ) {
           const whiteCurrent = await fetchUserCategoryRating(
             db,
             state.whitePlayer.userId,
@@ -1306,10 +1345,10 @@ export class GameSessionDO extends DurableObject<Env> {
               termination: state.termination || "unknown",
               rated: state.rated,
               gameType: state.isFriendGame ? "challenge" : "matchmaking",
-              whiteRatingBefore: state.whiteRatingBefore,
-              whiteRatingChange: state.whiteRatingDiff,
-              blackRatingBefore: state.blackRatingBefore,
-              blackRatingChange: state.blackRatingDiff,
+              whiteRatingBefore: state.result === "aborted" ? null : state.whiteRatingBefore,
+              whiteRatingChange: state.result === "aborted" ? null : state.whiteRatingDiff,
+              blackRatingBefore: state.result === "aborted" ? null : state.blackRatingBefore,
+              blackRatingChange: state.result === "aborted" ? null : state.blackRatingDiff,
               startedAt: new Date(state.startedAt),
               endedAt: new Date(state.endedAt),
             })
@@ -1461,11 +1500,19 @@ export class GameSessionDO extends DurableObject<Env> {
             MetricsCollector.alarmsStaleDropped(timer.kind, "reconnected");
             continue;
           }
-          // Disconnected player forfeits (RULE-02)
-          state.status = "ended";
-          state.winnerRole = timer.role === "white" ? "black" : "white";
-          state.result = timer.role === "white" ? "0-1" : "1-0";
-          state.termination = "abandoned";
+          if (state.ply < 2) {
+            // GAME-14 / GAME-35: Disconnect before both players have moved aborts the game without rating change
+            state.status = "aborted";
+            state.result = "aborted";
+            state.termination = "abandoned";
+            state.winnerRole = undefined;
+          } else {
+            // Disconnected player forfeits (RULE-02)
+            state.status = "ended";
+            state.winnerRole = timer.role === "white" ? "black" : "white";
+            state.result = timer.role === "white" ? "0-1" : "1-0";
+            state.termination = "abandoned";
+          }
           await this.persistState();
           await this.finalizeGame();
           break;

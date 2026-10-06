@@ -70,6 +70,7 @@ describe("Batch 2 High Priority Audits & Regression Tests (H1–H3)", () => {
           blackVol: 0.06,
           timeControl: "1+0", // Bullet
           rated: true,
+          initialPly: 2,
         }),
       });
       expect(initRes.status).toBe(200);
@@ -233,6 +234,7 @@ describe("Batch 2 High Priority Audits & Regression Tests (H1–H3)", () => {
           blackVol: 0.06,
           timeControl: "10+0", // Rapid
           rated: true,
+          initialPly: 2,
         }),
       });
 

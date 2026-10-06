@@ -15,8 +15,8 @@ describe("Glicko-2 Scaling", () => {
     expect(scaled.phi).toBeCloseTo(1.15129, 4);
 
     const reverted = scaleToStandard(scaled.mu, scaled.phi);
-    expect(reverted.rating).toBe(1500);
-    expect(reverted.deviation).toBe(200);
+    expect(reverted.rating).toBeCloseTo(1500, 5);
+    expect(reverted.deviation).toBeCloseTo(200, 5);
   });
 });
 
@@ -46,9 +46,9 @@ describe("Glickman Paper Example Test Vector", () => {
     const result = calculateRatingUpdate(player, matches, 0.5);
 
     // Glickman's paper: r' ≈ 1464.06, RD' ≈ 151.52, sigma' ≈ 0.05999
-    expect(result.rating).toBe(1464);
-    expect(result.deviation).toBe(152);
-    expect(result.volatility).toBeCloseTo(0.06, 3);
+    expect(result.rating).toBeCloseTo(1464.06, 1);
+    expect(result.deviation).toBeCloseTo(151.52, 1);
+    expect(result.volatility).toBeCloseTo(0.05999, 4);
   });
 });
 
@@ -91,9 +91,18 @@ describe("Two-Player 1-on-1 Head-to-Head", () => {
     };
 
     const result = calculateTwoPlayerMatch(p1, p2, 0.5);
-    expect(result.player1.rating).toBe(1600);
-    expect(result.player2.rating).toBe(1600);
-    expect(result.player1RatingDiff).toBe(0);
-    expect(result.player2RatingDiff).toBe(0);
+    expect(result.player1.rating).toBeCloseTo(1600, 2);
+    expect(result.player2.rating).toBeCloseTo(1600, 2);
+    expect(result.player1RatingDiff).toBeCloseTo(0, 2);
+    expect(result.player2RatingDiff).toBeCloseTo(0, 2);
+  });
+
+  it("enforces RATE-06 boundaries: rating >= 100 and 30 <= RD <= 350", () => {
+    const low = scaleToStandard(-20, 0.01);
+    expect(low.rating).toBe(100); // Clamped to MIN_RATING (100)
+    expect(low.deviation).toBe(30); // Clamped to MIN_RD (30)
+
+    const high = scaleToStandard(10, 10);
+    expect(high.deviation).toBe(350); // Clamped to MAX_RD (350)
   });
 });

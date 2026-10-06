@@ -1,5 +1,12 @@
 import type { Glicko2Rating } from "@etchess/types";
-import { CONVERGENCE_TOLERANCE, DEFAULT_TAU, GLICKO2_SCALE, MAX_RD, MIN_RD } from "./constants";
+import {
+  CONVERGENCE_TOLERANCE,
+  DEFAULT_TAU,
+  GLICKO2_SCALE,
+  MAX_RD,
+  MIN_RATING,
+  MIN_RD,
+} from "./constants";
 
 export interface MatchOutcomeResult {
   player1: Glicko2Rating;
@@ -31,6 +38,8 @@ export function scaleToGlicko2(
 
 /**
  * Scale Glicko-2 rating (mu, phi) back to standard scale (r, RD).
+ * Per RATE-06: Ratings, RD, and volatility are stored unrounded (rounding is for display only).
+ * Boundaries: r >= 100, 30 <= RD <= 350.
  */
 export function scaleToStandard(
   mu: number,
@@ -40,8 +49,8 @@ export function scaleToStandard(
   deviation: number;
 } {
   return {
-    rating: Math.round(mu * GLICKO2_SCALE + 1500),
-    deviation: Math.min(MAX_RD, Math.max(MIN_RD, Math.round(phi * GLICKO2_SCALE))),
+    rating: Math.max(MIN_RATING, mu * GLICKO2_SCALE + 1500),
+    deviation: Math.min(MAX_RD, Math.max(MIN_RD, phi * GLICKO2_SCALE)),
   };
 }
 

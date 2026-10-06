@@ -312,6 +312,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
         blackUserName: "Hikaru",
         timeControl: "3+2",
         rated: false,
+        initialPly: 2,
       }),
     });
 
