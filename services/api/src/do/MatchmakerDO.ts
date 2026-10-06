@@ -49,11 +49,25 @@ interface UserSocketAttachment {
 export class MatchmakerDO extends DurableObject<Env> {
   private queue: QueuedPlayer[] | null = null;
   private replayGuard: TicketReplayGuard;
-  private activePlayerGames = new Map<string, string>(); // userId -> gameId
+  private activePlayerGames: Map<string, string> | null = null; // userId -> gameId
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.replayGuard = new TicketReplayGuard(ctx.storage);
+  }
+
+  private async loadActivePlayerGames(): Promise<Map<string, string>> {
+    if (!this.activePlayerGames) {
+      const stored = await this.ctx.storage.get<Record<string, string>>("activePlayerGames");
+      this.activePlayerGames = stored ? new Map(Object.entries(stored)) : new Map();
+    }
+    return this.activePlayerGames;
+  }
+
+  private async persistActivePlayerGames(): Promise<void> {
+    if (!this.activePlayerGames) return;
+    const obj = Object.fromEntries(this.activePlayerGames.entries());
+    await this.ctx.storage.put("activePlayerGames", obj);
   }
 
   private async loadQueue(): Promise<QueuedPlayer[]> {
@@ -280,8 +294,10 @@ export class MatchmakerDO extends DurableObject<Env> {
     }
 
     // Register active game lock for both players (H10)
-    this.activePlayerGames.set(p1.userId, gameId);
-    this.activePlayerGames.set(p2.userId, gameId);
+    const activeGames = await this.loadActivePlayerGames();
+    activeGames.set(p1.userId, gameId);
+    activeGames.set(p2.userId, gameId);
+    await this.persistActivePlayerGames();
 
     const now = Date.now();
 
@@ -388,7 +404,9 @@ export class MatchmakerDO extends DurableObject<Env> {
     // 3. Clear Queue Endpoint (For integration testing)
     if (url.pathname.endsWith("/clear") && request.method === "POST") {
       this.queue = [];
-      this.activePlayerGames.clear();
+      const activeGames = await this.loadActivePlayerGames();
+      activeGames.clear();
+      await this.persistActivePlayerGames();
       await this.persistQueue();
       return Response.json({ cleared: true });
     }
@@ -407,7 +425,8 @@ export class MatchmakerDO extends DurableObject<Env> {
     if (url.pathname.includes("/user-active-game/") && request.method === "GET") {
       const parts = url.pathname.split("/");
       const targetUserId = parts[parts.length - 1];
-      const gameId = this.activePlayerGames.get(targetUserId) || null;
+      const activeGames = await this.loadActivePlayerGames();
+      const gameId = activeGames.get(targetUserId) || null;
       return Response.json({
         active: Boolean(gameId),
         gameId,
@@ -416,7 +435,8 @@ export class MatchmakerDO extends DurableObject<Env> {
 
     // 6. Query all active live games & online user count (for Admin Dashboard)
     if (url.pathname.endsWith("/active-games") && request.method === "GET") {
-      const gameIds = Array.from(new Set(this.activePlayerGames.values()));
+      const activeGames = await this.loadActivePlayerGames();
+      const gameIds = Array.from(new Set(activeGames.values()));
       const onlineCount = this.ctx.getWebSockets().filter((ws) => {
         const att = ws.deserializeAttachment() as UserSocketAttachment | null;
         return Boolean(att?.authenticated);
@@ -433,23 +453,27 @@ export class MatchmakerDO extends DurableObject<Env> {
         gameId?: string;
         userId?: string;
       };
+      const activeGames = await this.loadActivePlayerGames();
       if (body.userId) {
-        this.activePlayerGames.delete(body.userId);
+        activeGames.delete(body.userId);
       }
       if (body.gameId) {
-        for (const [uid, gid] of this.activePlayerGames.entries()) {
+        for (const [uid, gid] of activeGames.entries()) {
           if (gid === body.gameId) {
-            this.activePlayerGames.delete(uid);
+            activeGames.delete(uid);
           }
         }
       }
+      await this.persistActivePlayerGames();
       return Response.json({ success: true });
     }
 
     // 8. Set active game lock (for pairing or testing)
     if (url.pathname.endsWith("/set-active-game") && request.method === "POST") {
       const body = (await request.json()) as { userId: string; gameId: string };
-      this.activePlayerGames.set(body.userId, body.gameId);
+      const activeGames = await this.loadActivePlayerGames();
+      activeGames.set(body.userId, body.gameId);
+      await this.persistActivePlayerGames();
       return Response.json({ success: true });
     }
 
@@ -548,8 +572,9 @@ export class MatchmakerDO extends DurableObject<Env> {
         }
 
         // Enforce active game lock: prevent multiple concurrent live games (H10)
-        if (attachment.userId && this.activePlayerGames.has(attachment.userId)) {
-          const existingGameId = this.activePlayerGames.get(attachment.userId);
+        const activeGames = await this.loadActivePlayerGames();
+        if (attachment.userId && activeGames.has(attachment.userId)) {
+          const existingGameId = activeGames.get(attachment.userId);
           const ns = this.env.GAME_SESSION_DO;
           if (ns && existingGameId) {
             try {
@@ -583,7 +608,8 @@ export class MatchmakerDO extends DurableObject<Env> {
               // Session not found or finished, allow clean queueing
             }
           }
-          this.activePlayerGames.delete(attachment.userId);
+          activeGames.delete(attachment.userId);
+          await this.persistActivePlayerGames();
         }
 
         const category = getRatingCategory(timeControlId);
@@ -717,7 +743,7 @@ export class MatchmakerDO extends DurableObject<Env> {
       return;
     }
 
-    if (!this.replayGuard.consume(verification.payload.jti, verification.payload.exp)) {
+    if (!(await this.replayGuard.consume(verification.payload.jti, verification.payload.exp))) {
       ws.close(WS_CLOSE_CODES.UNAUTHORIZED, "Ticket already used");
       return;
     }

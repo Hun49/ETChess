@@ -367,6 +367,7 @@ describe("Phase 4 — Authoritative GameSessionDO Game Loop", () => {
     });
 
     // White never plays a move within 30s. Alarm triggers:
+    await sessionDO.fetch("http://internal/expire-timers", { method: "POST" });
     const fired = await runDurableObjectAlarm(sessionDO);
     expect(fired).toBe(true);
 

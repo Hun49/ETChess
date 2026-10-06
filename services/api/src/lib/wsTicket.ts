@@ -147,16 +147,24 @@ export class TicketReplayGuard {
 
   /**
    * Consumes a ticket. Returns false if already used (replay attack).
+   * Checks both memory cache and persistent DO storage.
    */
-  consume(jti: string, expiresAt: number): boolean {
+  async consume(jti: string, expiresAt: number): Promise<boolean> {
     this.cleanup();
     if (this.consumedJtis.has(jti)) {
       return false; // Replayed ticket in memory
     }
-    this.consumedJtis.set(jti, expiresAt);
+
     if (this.storage) {
-      void this.storage.put(`jti:${jti}`, expiresAt).catch(() => {});
+      const persisted = await this.storage.get<number>(`jti:${jti}`);
+      if (persisted !== undefined) {
+        this.consumedJtis.set(jti, persisted);
+        return false; // Replayed ticket survived eviction via DO storage
+      }
+      await this.storage.put(`jti:${jti}`, expiresAt);
     }
+
+    this.consumedJtis.set(jti, expiresAt);
     return true;
   }
 
@@ -165,6 +173,9 @@ export class TicketReplayGuard {
     for (const [jti, exp] of this.consumedJtis.entries()) {
       if (now > exp) {
         this.consumedJtis.delete(jti);
+        if (this.storage) {
+          void this.storage.delete(`jti:${jti}`).catch(() => {});
+        }
       }
     }
   }

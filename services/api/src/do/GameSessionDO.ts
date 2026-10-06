@@ -410,7 +410,17 @@ export class GameSessionDO extends DurableObject<Env> {
       return Response.json({ success: true, status: state.status });
     }
 
-    // 6. WebSocket Connection Upgrade
+    // 6. Test Helper: Fast-forward / Expire Timers (for testing alarms deterministically)
+    if (url.pathname.endsWith("/expire-timers") && request.method === "POST") {
+      const now = Date.now();
+      for (const t of this.timers) {
+        t.dueAt = now - 1;
+      }
+      await this.ctx.storage.put("timers", this.timers);
+      return Response.json({ success: true, expiredCount: this.timers.length });
+    }
+
+    // 7. WebSocket Connection Upgrade
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       const state = await this.loadState();
       if (!state) {
@@ -643,7 +653,7 @@ export class GameSessionDO extends DurableObject<Env> {
     }
 
     // Replay protection: single-use ticket check (survives DO eviction via storage)
-    if (!this.replayGuard.consume(jti, exp)) {
+    if (!(await this.replayGuard.consume(jti, exp))) {
       ws.close(4001, "Ticket has already been consumed");
       return;
     }
@@ -1412,6 +1422,20 @@ export class GameSessionDO extends DurableObject<Env> {
       result: state.result,
     });
 
+    // Free active game locks in MatchmakerDO so players can queue or start new games
+    if (this.env.MATCHMAKER_DO) {
+      try {
+        const mmStub = this.env.MATCHMAKER_DO.get(this.env.MATCHMAKER_DO.idFromName("global"));
+        await mmStub.fetch("http://internal/clear-active-game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gameId: state.gameId }),
+        });
+      } catch {
+        // Best-effort MatchmakerDO lock cleanup
+      }
+    }
+
     // 6. Schedule auto-close alarm in 5 minutes
     this.addTimer({
       kind: "AUTO_CLOSE",
@@ -1431,8 +1455,9 @@ export class GameSessionDO extends DurableObject<Env> {
     if (!state) return;
 
     const now = Date.now();
-    const minDueAt = this.timers.length > 0 ? Math.min(...this.timers.map((t) => t.dueAt)) : 0;
-    const threshold = Math.max(now, minDueAt);
+    // Alarm precision: only execute timers that are actually due (within 100ms tolerance for clock jitter).
+    // Stale alarms that wake early will never prematurely execute future timers.
+    const threshold = now + 100;
     const dueTimers = this.timers.filter((t) => t.dueAt <= threshold);
 
     // Silent network drop detection via heartbeat timeout (30 seconds) (H5)

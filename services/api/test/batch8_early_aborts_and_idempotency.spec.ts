@@ -436,6 +436,7 @@ describe("Batch 8: Early Game Abort Rules & Finalization Idempotency", () => {
     await new Promise((r) => setTimeout(r, 60));
 
     // Trigger DO alarm (which is DISCONNECT_GRACE for black)
+    await sessionDO.fetch("http://internal/expire-timers", { method: "POST" });
     const fired = await runDurableObjectAlarm(sessionDO);
     expect(fired).toBe(true);
 

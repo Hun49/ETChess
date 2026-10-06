@@ -188,18 +188,18 @@ describe("Phase 3 — Auth, Profiles, and WebSocket Tickets", () => {
     }
   });
 
-  it("TicketReplayGuard enforces single-use replay protection", () => {
+  it("TicketReplayGuard enforces single-use replay protection", async () => {
     const guard = new TicketReplayGuard();
     const jti = "test-jti-unique-uuid-1";
     const exp = Date.now() + 30000;
 
     // First use: accepted
-    expect(guard.consume(jti, exp)).toBe(true);
+    expect(await guard.consume(jti, exp)).toBe(true);
 
     // Second use with same jti: rejected
-    expect(guard.consume(jti, exp)).toBe(false);
+    expect(await guard.consume(jti, exp)).toBe(false);
 
     // Another jti: accepted
-    expect(guard.consume("another-jti", exp)).toBe(true);
+    expect(await guard.consume("another-jti", exp)).toBe(true);
   });
 });
