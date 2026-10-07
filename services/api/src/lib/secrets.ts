@@ -28,3 +28,43 @@ export function getAuthSecret(env: Env): string {
   }
   return secret.trim();
 }
+
+export interface EnvValidationResult {
+  valid: boolean;
+  missing: string[];
+  errors: string[];
+}
+
+/**
+ * Validates Cloudflare runtime environment bindings and security secrets (N2).
+ */
+export function validateEnvironment(env: Env): EnvValidationResult {
+  const missing: string[] = [];
+  const errors: string[] = [];
+
+  if (!env.DB) missing.push("DB");
+  if (!env.GAME_SESSION_DO) missing.push("GAME_SESSION_DO");
+  if (!env.MATCHMAKER_DO) missing.push("MATCHMAKER_DO");
+
+  if (!env.BETTER_AUTH_SECRET) {
+    missing.push("BETTER_AUTH_SECRET");
+  } else if (
+    typeof env.BETTER_AUTH_SECRET !== "string" ||
+    env.BETTER_AUTH_SECRET.trim().length < 32
+  ) {
+    errors.push("BETTER_AUTH_SECRET must be configured with at least 32 characters");
+  }
+
+  if (
+    env.WS_TICKET_SECRET &&
+    (typeof env.WS_TICKET_SECRET !== "string" || env.WS_TICKET_SECRET.trim().length < 32)
+  ) {
+    errors.push("WS_TICKET_SECRET must be configured with at least 32 characters if provided");
+  }
+
+  return {
+    valid: missing.length === 0 && errors.length === 0,
+    missing,
+    errors,
+  };
+}

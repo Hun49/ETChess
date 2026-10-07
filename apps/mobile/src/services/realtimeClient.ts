@@ -50,7 +50,7 @@ export class RealtimeClient {
     return new Promise((resolve, reject) => {
       this.disconnectUser();
 
-      const url = `${this.wsBaseUrl}/ws/user?ticket=${encodeURIComponent(ticket)}`;
+      const url = `${this.wsBaseUrl}/ws/user`;
       this.notifyUserStatus("connecting");
 
       try {
@@ -58,6 +58,7 @@ export class RealtimeClient {
         this.userWs = ws;
 
         ws.onopen = () => {
+          ws.send(JSON.stringify({ v: 1, type: "AUTH", payload: { ticket } }));
           this.notifyUserStatus("connected");
           this.startUserPing();
           resolve();
@@ -159,7 +160,7 @@ export class RealtimeClient {
     return new Promise((resolve, reject) => {
       this.disconnectGame();
 
-      const url = `${this.wsBaseUrl}/ws/game/${encodeURIComponent(gameId)}?ticket=${encodeURIComponent(ticket)}`;
+      const url = `${this.wsBaseUrl}/ws/game/${encodeURIComponent(gameId)}`;
       this.notifyGameStatus("connecting");
 
       try {
@@ -167,6 +168,7 @@ export class RealtimeClient {
         this.gameWs = ws;
 
         ws.onopen = () => {
+          ws.send(JSON.stringify({ v: 1, type: "AUTH", payload: { ticket } }));
           this.notifyGameStatus("connected");
           this.startGamePing();
           resolve();

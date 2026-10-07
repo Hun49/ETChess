@@ -111,6 +111,20 @@ app.get("/ws/game/:gameId", async (c) => {
     );
   }
 
+  // Reject tickets in query strings to prevent access log leakage (N8)
+  if (c.req.query("ticket")) {
+    return c.json(
+      {
+        error: {
+          code: "INVALID_AUTH_TRANSPORT",
+          message:
+            "WebSocket tickets must not be passed in query strings. Authenticate using first-frame AUTH frame.",
+        },
+      },
+      400,
+    );
+  }
+
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     return c.json(
       {
@@ -141,6 +155,20 @@ app.get("/ws/user", async (c) => {
         },
       },
       403,
+    );
+  }
+
+  // Reject tickets in query strings to prevent access log leakage (N8)
+  if (c.req.query("ticket")) {
+    return c.json(
+      {
+        error: {
+          code: "INVALID_AUTH_TRANSPORT",
+          message:
+            "WebSocket tickets must not be passed in query strings. Authenticate using first-frame AUTH frame.",
+        },
+      },
+      400,
     );
   }
 

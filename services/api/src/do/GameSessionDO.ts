@@ -33,7 +33,13 @@ import { TicketReplayGuard, verifyWsTicket } from "../lib/wsTicket";
 import type { Env } from "../types";
 
 export interface StoredTimer {
-  kind: "FIRST_MOVE_DEADLINE" | "CLOCK_FLAG" | "DISCONNECT_GRACE" | "AUTO_CLOSE" | "FINALIZE_RETRY";
+  kind:
+    | "FIRST_MOVE_DEADLINE"
+    | "CLOCK_FLAG"
+    | "DISCONNECT_GRACE"
+    | "AUTO_CLOSE"
+    | "FINALIZE_RETRY"
+    | "HEARTBEAT_WATCHDOG";
   dueAt: number;
   ply: number;
   version: number;
@@ -428,7 +434,18 @@ export class GameSessionDO extends DurableObject<Env> {
       }
 
       const url = new URL(request.url);
-      const queryTicket = url.searchParams.get("ticket");
+      if (url.searchParams.has("ticket")) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "INVALID_AUTH_TRANSPORT",
+              message:
+                "WebSocket tickets must not be passed in query strings. Authenticate using first-frame AUTH frame.",
+            },
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
 
       const webSocketPair = new WebSocketPair();
       const [client, server] = Object.values(webSocketPair);
@@ -438,27 +455,23 @@ export class GameSessionDO extends DurableObject<Env> {
         userName: "",
         role: "spectator",
         authenticated: false,
+        lastHeartbeatAt: Date.now(),
       };
 
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment(attachment);
 
-      if (queryTicket) {
-        // Authenticate immediately if ticket is passed in query
-        await this.handleAuthFrame(server, attachment, queryTicket);
-      } else {
-        // Enforce 5-second authentication deadline on unauthenticated sockets (C3)
-        setTimeout(() => {
-          try {
-            const currentAtt = server.deserializeAttachment() as SocketAttachment | null;
-            if (currentAtt && !currentAtt.authenticated) {
-              server.close(4001, "Authentication timeout (5s)");
-            }
-          } catch {
-            // Already closed
+      // Enforce 5-second authentication deadline on unauthenticated sockets (C3)
+      setTimeout(() => {
+        try {
+          const currentAtt = server.deserializeAttachment() as SocketAttachment | null;
+          if (currentAtt && !currentAtt.authenticated) {
+            server.close(4001, "Authentication timeout (5s)");
           }
-        }, 5000);
-      }
+        } catch {
+          // Already closed
+        }
+      }, 5000);
 
       return new Response(null, {
         status: 101,
@@ -480,7 +493,7 @@ export class GameSessionDO extends DurableObject<Env> {
       return;
     }
 
-    // 2. Per-connection message rate limiter: max 25 messages/second (H7)
+    // 2. Per-connection message rate limiter: max 25 messages/second (H7, N3)
     const now = Date.now();
     const windowStart = attachment.windowStartMs ?? now;
     if (now - windowStart < 1000) {
@@ -493,13 +506,16 @@ export class GameSessionDO extends DurableObject<Env> {
           message: "WebSocket message rate limit exceeded (max 25/sec)",
           serverTime: now,
         });
-        ws.close(4029, "Rate limit exceeded");
+        ws.close(1008, "Rate limit exceeded (max 25/sec)");
         return;
       }
     } else {
       attachment.windowStartMs = now;
       attachment.messageCountInWindow = 1;
     }
+    attachment.lastHeartbeatAt = now;
+    // CRITICAL FIX (N3): Persist updated rate limiter counters back to socket attachment!
+    ws.serializeAttachment(attachment);
 
     const parsed = parseClientGameFrame(message);
     if (!parsed.success) {
@@ -595,13 +611,17 @@ export class GameSessionDO extends DurableObject<Env> {
         if (attachment.role === "white" || attachment.role === "black") {
           const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
           player.lastHeartbeatAt = now;
-          // Calculate server-measured RTT when client passes timestamp as clientSeq (H4)
+          // N1: Authoritative RTT calculation.
+          // Client cannot declare arbitrary RTT to manipulate clock or lag credit.
+          // Clamped strictly to [0, 2 * LAG_CREDIT_CAP_MS] (max 200ms).
           if (seq && seq > now - 10000 && seq <= now + 1000) {
-            const measuredRtt = Math.max(0, now - seq);
-            player.rttMs = measuredRtt;
-            attachment.measuredRttMs = measuredRtt;
+            const rawRtt = Math.max(0, now - seq);
+            const clampedRtt = Math.min(rawRtt, PRODUCT_RULES.LAG_CREDIT_CAP_MS * 2);
+            player.rttMs = clampedRtt;
+            attachment.measuredRttMs = clampedRtt;
           }
         }
+        ws.serializeAttachment(attachment);
 
         this.send(ws, {
           v: PROTOCOL_VERSION,
@@ -713,6 +733,15 @@ export class GameSessionDO extends DurableObject<Env> {
           },
         });
       }
+    }
+
+    if (state.status === "active") {
+      this.addTimer({
+        kind: "HEARTBEAT_WATCHDOG",
+        dueAt: now + 15000,
+        ply: state.ply,
+        version: state.version,
+      });
     }
 
     await this.persistState();
@@ -886,6 +915,13 @@ export class GameSessionDO extends DurableObject<Env> {
 
     // 7. Schedule next timer if game active
     if (!gameOver) {
+      this.addTimer({
+        kind: "HEARTBEAT_WATCHDOG",
+        dueAt: now + 15000,
+        ply: state.ply,
+        version: state.version,
+      });
+
       if (state.ply === 1) {
         // Black's first move deadline (30s)
         this.addTimer({
@@ -1460,11 +1496,11 @@ export class GameSessionDO extends DurableObject<Env> {
     const threshold = now + 100;
     const dueTimers = this.timers.filter((t) => t.dueAt <= threshold);
 
-    // Silent network drop detection via heartbeat timeout (30 seconds) (H5)
+    // Silent network drop detection via heartbeat timeout (15 seconds) (H5, N4)
     if (state.status === "active") {
       for (const role of ["white", "black"] as const) {
         const player = role === "white" ? state.whitePlayer : state.blackPlayer;
-        if (player.connected && player.lastHeartbeatAt && now - player.lastHeartbeatAt > 30000) {
+        if (player.connected && player.lastHeartbeatAt && now - player.lastHeartbeatAt > 15000) {
           player.connected = false;
           player.disconnectedAt = now;
           this.addTimer({
@@ -1492,6 +1528,19 @@ export class GameSessionDO extends DurableObject<Env> {
       MetricsCollector.alarmsFired(timer.kind);
 
       switch (timer.kind) {
+        case "HEARTBEAT_WATCHDOG": {
+          if (state.status !== "active") break;
+          // Re-arm watchdog check every 15s while active
+          this.addTimer({
+            kind: "HEARTBEAT_WATCHDOG",
+            dueAt: now + 15000,
+            ply: state.ply,
+            version: state.version,
+          });
+          await this.persistState();
+          break;
+        }
+
         case "FIRST_MOVE_DEADLINE": {
           // Verify condition: game active, ply < 2, version matches
           if (state.status !== "active" || state.ply >= 2 || state.version !== timer.version) {

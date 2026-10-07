@@ -27,6 +27,7 @@ export const gamesRoute = new Hono<{
     async (c) => {
       const { userId, category, limit, offset } = c.req.valid("query");
       const db = drizzle(c.env.DB, { schema });
+      const currentUser = c.get("user");
 
       const conditions = [];
       if (userId) {
@@ -36,6 +37,22 @@ export const gamesRoute = new Hono<{
       }
       if (category) {
         conditions.push(eq(schema.games.category, category));
+      }
+
+      // IDOR Protection (H9): Third-party callers can only see public rated games or games they participated in
+      const isAdmin = currentUser?.role === "admin";
+      if (!isAdmin) {
+        if (currentUser?.id) {
+          conditions.push(
+            or(
+              eq(schema.games.rated, true),
+              eq(schema.games.whitePlayerId, currentUser.id),
+              eq(schema.games.blackPlayerId, currentUser.id),
+            ),
+          );
+        } else {
+          conditions.push(eq(schema.games.rated, true));
+        }
       }
 
       const query = db.select().from(schema.games);
@@ -93,6 +110,7 @@ export const gamesRoute = new Hono<{
       const targetUserId = c.req.param("userId");
       const { category, limit, offset } = c.req.valid("query");
       const db = drizzle(c.env.DB, { schema });
+      const currentUser = c.get("user");
 
       const conditions = [
         or(
@@ -103,6 +121,13 @@ export const gamesRoute = new Hono<{
 
       if (category) {
         conditions.push(eq(schema.games.category, category));
+      }
+
+      // IDOR Protection (H9): Third-party callers can only see public rated games
+      const isOwner = currentUser?.id === targetUserId;
+      const isAdmin = currentUser?.role === "admin";
+      if (!isOwner && !isAdmin) {
+        conditions.push(eq(schema.games.rated, true));
       }
 
       const rows = await db
@@ -162,6 +187,26 @@ export const gamesRoute = new Hono<{
       );
     }
 
+    // IDOR Protection (H9): Unrated / private casual games are only visible to participants or admins
+    if (!game.rated) {
+      const currentUser = c.get("user");
+      const isParticipant =
+        currentUser &&
+        (currentUser.id === game.whitePlayerId || currentUser.id === game.blackPlayerId);
+      const isAdmin = currentUser?.role === "admin";
+      if (!isParticipant && !isAdmin) {
+        return c.json(
+          {
+            error: {
+              code: "FORBIDDEN",
+              message: "You do not have permission to view this game",
+            },
+          },
+          403,
+        );
+      }
+    }
+
     let whitePlayer = null;
     let blackPlayer = null;
 
@@ -206,6 +251,26 @@ export const gamesRoute = new Hono<{
         },
         404,
       );
+    }
+
+    // IDOR Protection (H9): Unrated / private casual games are only exportable by participants or admins
+    if (!game.rated) {
+      const currentUser = c.get("user");
+      const isParticipant =
+        currentUser &&
+        (currentUser.id === game.whitePlayerId || currentUser.id === game.blackPlayerId);
+      const isAdmin = currentUser?.role === "admin";
+      if (!isParticipant && !isAdmin) {
+        return c.json(
+          {
+            error: {
+              code: "FORBIDDEN",
+              message: "You do not have permission to export this game PGN",
+            },
+          },
+          403,
+        );
+      }
     }
 
     let whiteName = "Anonymous";

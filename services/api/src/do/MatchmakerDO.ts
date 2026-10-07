@@ -44,6 +44,7 @@ interface UserSocketAttachment {
   authenticated: boolean;
   windowStartMs?: number;
   messageCountInWindow?: number;
+  lastHeartbeatAt?: number;
 }
 
 export class MatchmakerDO extends DurableObject<Env> {
@@ -351,34 +352,41 @@ export class MatchmakerDO extends DurableObject<Env> {
 
     // 1. WebSocket Upgrade (/ws/user or /ws/matchmaker)
     if (request.headers.get("Upgrade") === "websocket") {
+      if (url.searchParams.has("ticket")) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "INVALID_AUTH_TRANSPORT",
+              message:
+                "WebSocket tickets must not be passed in query strings. Authenticate using first-frame AUTH frame.",
+            },
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       const webSocketPair = new WebSocketPair();
       const [client, server] = Object.values(webSocketPair);
 
-      const ticketQuery = url.searchParams.get("ticket");
-
       const attachment: UserSocketAttachment = {
         authenticated: false,
+        lastHeartbeatAt: Date.now(),
       };
 
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment(attachment);
 
-      // If ticket provided in query, verify immediately
-      if (ticketQuery) {
-        await this.authenticateSocket(server, ticketQuery);
-      } else {
-        // Enforce 5-second authentication deadline on unauthenticated sockets (C3)
-        setTimeout(() => {
-          try {
-            const cur = server.deserializeAttachment() as UserSocketAttachment | null;
-            if (cur && !cur.authenticated) {
-              server.close(WS_CLOSE_CODES.UNAUTHORIZED, "Authentication timeout (5s)");
-            }
-          } catch {
-            // Already closed
+      // Enforce 5-second authentication deadline on unauthenticated sockets (C3)
+      setTimeout(() => {
+        try {
+          const cur = server.deserializeAttachment() as UserSocketAttachment | null;
+          if (cur && !cur.authenticated) {
+            server.close(WS_CLOSE_CODES.UNAUTHORIZED, "Authentication timeout (5s)");
           }
-        }, 5000);
-      }
+        } catch {
+          // Already closed
+        }
+      }, 5000);
 
       return new Response(null, {
         status: 101,
@@ -514,7 +522,7 @@ export class MatchmakerDO extends DurableObject<Env> {
       return;
     }
 
-    // 2. Per-connection message rate limiter: max 25 messages/second (H7)
+    // 2. Per-connection message rate limiter: max 25 messages/second (H7, N3)
     const now = Date.now();
     const windowStart = attachment.windowStartMs ?? now;
     if (now - windowStart < 1000) {
@@ -526,16 +534,18 @@ export class MatchmakerDO extends DurableObject<Env> {
           serverTime: now,
           payload: {
             code: "RATE_LIMITED",
-            message: "WebSocket message rate limit exceeded",
+            message: "WebSocket message rate limit exceeded (max 25/sec)",
           },
         });
-        ws.close(4029, "Rate limit exceeded");
+        ws.close(1008, "Rate limit exceeded (max 25/sec)");
         return;
       }
     } else {
       attachment.windowStartMs = now;
       attachment.messageCountInWindow = 1;
     }
+    attachment.lastHeartbeatAt = now;
+    ws.serializeAttachment(attachment);
 
     const parsed = parseClientUserFrame(message);
     if (!parsed.success) {
@@ -741,6 +751,9 @@ export class MatchmakerDO extends DurableObject<Env> {
             ? (frame.payload as { clientSeq?: number }).clientSeq
             : undefined;
 
+        attachment.lastHeartbeatAt = Date.now();
+        ws.serializeAttachment(attachment);
+
         this.send(ws, {
           v: PROTOCOL_VERSION,
           type: "HEARTBEAT_PONG",
@@ -778,6 +791,7 @@ export class MatchmakerDO extends DurableObject<Env> {
       rating: payload.rating,
       userRole: payload.userRole,
       authenticated: true,
+      lastHeartbeatAt: Date.now(),
     };
 
     ws.serializeAttachment(attachment);
@@ -786,11 +800,22 @@ export class MatchmakerDO extends DurableObject<Env> {
   async webSocketClose(ws: WebSocket): Promise<void> {
     const attachment = ws.deserializeAttachment() as UserSocketAttachment | null;
     if (attachment?.userId) {
-      const queue = await this.loadQueue();
-      const initialLength = queue.length;
-      this.queue = queue.filter((p) => p.userId !== attachment.userId);
-      if (this.queue.length !== initialLength) {
-        await this.persistQueue();
+      const remainingUserSockets = this.ctx.getWebSockets().filter((s) => {
+        if (s === ws) return false;
+        try {
+          const att = s.deserializeAttachment() as UserSocketAttachment | null;
+          return att?.authenticated && att.userId === attachment.userId;
+        } catch {
+          return false;
+        }
+      });
+      if (remainingUserSockets.length === 0) {
+        const queue = await this.loadQueue();
+        const initialLength = queue.length;
+        this.queue = queue.filter((p) => p.userId !== attachment.userId);
+        if (this.queue.length !== initialLength) {
+          await this.persistQueue();
+        }
       }
     }
   }
@@ -805,9 +830,24 @@ export class MatchmakerDO extends DurableObject<Env> {
    */
   async alarm(): Promise<void> {
     const queue = await this.loadQueue();
-    if (queue.length === 0) return;
-
     const now = Date.now();
+
+    // Heartbeat watchdog (N4): Clean up dead sockets with no heartbeat for >30s
+    for (const s of this.ctx.getWebSockets()) {
+      try {
+        const att = s.deserializeAttachment() as UserSocketAttachment | null;
+        if (att?.authenticated && att.lastHeartbeatAt && now - att.lastHeartbeatAt > 30000) {
+          s.close(1001, "Heartbeat timeout (30s)");
+          if (att.userId) {
+            this.queue = (this.queue ?? []).filter((p) => p.userId !== att.userId);
+          }
+        }
+      } catch {
+        // Socket closed
+      }
+    }
+
+    if (!this.queue || this.queue.length === 0) return;
 
     // 1. Evict players who exceeded 120-second queue timeout (RULE-06)
     const timedOut = queue.filter((p) => now - p.joinedAt >= PRODUCT_RULES.MATCHMAKING_TIMEOUT_MS);
