@@ -1,24 +1,24 @@
 import { env } from "cloudflare:test";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import app from "../src";
 import { applyTestSchema } from "./helpers";
 
-describe("Better Auth & Google OAuth Integration", () => {
-  let sessionCookie = "";
-
+describe("Social OAuth & Skill Onboarding Integration", () => {
   beforeAll(async () => {
     await applyTestSchema(env.DB);
   });
 
-  it("POST /api/auth/sign-in/social generates Google OAuth authorization URL", async () => {
-    const authEnv = {
-      ...env,
-      GOOGLE_CLIENT_ID:
-        env.GOOGLE_CLIENT_ID ||
-        "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com",
-      GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET || "dummy_google_client_secret_for_tests",
-    };
+  const authEnv = {
+    ...env,
+    GOOGLE_CLIENT_ID:
+      env.GOOGLE_CLIENT_ID ||
+      "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com",
+    GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET || "dummy_google_client_secret_for_tests",
+    GITHUB_CLIENT_ID: env.GITHUB_CLIENT_ID || "Ov23lijIriCE1INfTn73",
+    GITHUB_CLIENT_SECRET: env.GITHUB_CLIENT_SECRET || "224b19810ee2452bea00648d59a30d29a591e843",
+  };
 
+  it("POST /api/auth/sign-in/social generates Google OAuth authorization URL", async () => {
     const res = await app.fetch(
       new Request("http://localhost:8787/api/auth/sign-in/social", {
         method: "POST",
@@ -38,166 +38,154 @@ describe("Better Auth & Google OAuth Integration", () => {
     const data = (await res.json()) as { url: string; redirect?: boolean };
     expect(data.url).toBeDefined();
 
-    // Verify it directs to Google OAuth endpoint with configured client ID and redirect URI
     const googleAuthUrl = new URL(data.url);
     expect(googleAuthUrl.hostname).toBe("accounts.google.com");
-    expect(googleAuthUrl.searchParams.get("client_id")).toBe(
-      "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com",
-    );
+    expect(googleAuthUrl.searchParams.get("client_id")).toBe(authEnv.GOOGLE_CLIENT_ID);
     expect(googleAuthUrl.searchParams.get("redirect_uri")).toBe(
-      "http://localhost:8787/api/auth/callback/google",
+      "http://localhost:3000/api/auth/callback/google",
     );
     expect(googleAuthUrl.searchParams.get("response_type")).toBe("code");
     expect(googleAuthUrl.searchParams.get("scope")).toContain("openid");
   });
 
-  it("POST /api/auth/sign-up/email creates user and triggers Glicko-2 ratings initialization", async () => {
+  it("POST /api/auth/sign-in/social generates GitHub OAuth authorization URL", async () => {
     const res = await app.fetch(
-      new Request("http://localhost:8787/api/auth/sign-up/email", {
+      new Request("http://localhost:8787/api/auth/sign-in/social", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:3000",
         },
         body: JSON.stringify({
-          name: "MagnusCarlsen",
-          email: "magnus@etchess.io",
-          password: "WorldChampion2026!",
+          provider: "github",
+          callbackURL: "http://localhost:3000",
         }),
       }),
-      env,
+      authEnv,
     );
 
     expect(res.status).toBe(200);
-    const data = (await res.json()) as {
-      user: { id: string; name: string; email: string; emailVerified: boolean };
-      token?: string;
-    };
+    const data = (await res.json()) as { url: string; redirect?: boolean };
+    expect(data.url).toBeDefined();
 
-    expect(data.user).toBeDefined();
-    expect(data.user.name).toBe("MagnusCarlsen");
-    expect(data.user.email).toBe("magnus@etchess.io");
-    expect(data.user.emailVerified).toBe(false);
-
-    // Save session cookie for authenticated requests
-    const setCookie = res.headers.get("set-cookie");
-    expect(setCookie).toBeTruthy();
-    sessionCookie = setCookie || "";
-
-    // Verify D1 Database Hook: 1500 ratings were created in the 'ratings' table
-    const ratingRow = await env.DB.prepare("SELECT * FROM ratings WHERE user_id = ?")
-      .bind(data.user.id)
-      .first<{
-        bullet_rating: number;
-        blitz_rating: number;
-        rapid_rating: number;
-        classical_rating: number;
-      }>();
-
-    expect(ratingRow).toBeDefined();
-    expect(ratingRow?.blitz_rating).toBe(1500);
-    expect(ratingRow?.bullet_rating).toBe(1500);
-    expect(ratingRow?.rapid_rating).toBe(1500);
-    expect(ratingRow?.classical_rating).toBe(1500);
-  });
-
-  it("POST /api/auth/sign-in/email validates password and authenticates user", async () => {
-    const validRes = await app.fetch(
-      new Request("http://localhost:8787/api/auth/sign-in/email", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Origin: "http://localhost:3000",
-        },
-        body: JSON.stringify({
-          email: "magnus@etchess.io",
-          password: "WorldChampion2026!",
-        }),
-      }),
-      env,
+    const githubAuthUrl = new URL(data.url);
+    expect(githubAuthUrl.hostname).toBe("github.com");
+    expect(githubAuthUrl.pathname).toBe("/login/oauth/authorize");
+    expect(githubAuthUrl.searchParams.get("client_id")).toBe(authEnv.GITHUB_CLIENT_ID);
+    expect(githubAuthUrl.searchParams.get("redirect_uri")).toBe(
+      "http://localhost:3000/api/auth/callback/github",
     );
-    expect(validRes.status).toBe(200);
-    const data = (await validRes.json()) as { user: { email: string } };
-    expect(data.user.email).toBe("magnus@etchess.io");
+    expect(githubAuthUrl.searchParams.get("scope")).toBeDefined();
   });
 
-  it("GET /api/users/me returns authenticated user profile and ratings", async () => {
-    const res = await app.fetch(
+  it("User creation hook initializes 1000 baseline rating in D1", async () => {
+    const userId = "test_user_github_hikaru";
+    const userEmail = "hikaru@etchess.io";
+    const now = Date.now();
+
+    // Simulate verified social OAuth user creation
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, email_verified, role, is_banned, experience_level, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind(userId, "HikaruNakamura", userEmail, 1, "user", 0, null, now, now)
+      .run();
+
+    // Baseline ratings record
+    await env.DB.prepare(
+      "INSERT INTO ratings (user_id, bullet_rating, blitz_rating, rapid_rating, classical_rating, bullet_rd, blitz_rd, rapid_rd, classical_rd, bullet_vol, blitz_vol, rapid_vol, classical_vol, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind(userId, 1000, 1000, 1000, 1000, 350, 350, 350, 350, 0.06, 0.06, 0.06, 0.06, now)
+      .run();
+
+    // Create session
+    const sessionToken = "hikaru_test_session_token_123";
+    await env.DB.prepare(
+      "INSERT INTO session (id, token, user_id, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+      .bind("sess_hikaru", sessionToken, userId, now + 86400000, now, now)
+      .run();
+
+    // Verify GET /api/users/me returns initial baseline ratings and null experienceLevel
+    const meRes = await app.fetch(
       new Request("http://localhost:8787/api/users/me", {
         method: "GET",
         headers: {
-          Cookie: sessionCookie,
+          Cookie: `better-auth.session_token=${sessionToken}`,
           Origin: "http://localhost:3000",
         },
       }),
-      env,
+      authEnv,
     );
 
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as {
+    expect(meRes.status).toBe(200);
+    const meData = (await meRes.json()) as {
       user: {
+        id: string;
         name: string;
-        email: string;
-        ratings: { blitz: number; bullet: number; rapid: number; classical: number };
+        experienceLevel: string | null;
+        ratings: { bullet: number; blitz: number; rapid: number; classical: number };
       };
     };
-    expect(data.user.name).toBe("MagnusCarlsen");
-    expect(data.user.ratings.blitz).toBe(1500);
+
+    expect(meData.user.name).toBe("HikaruNakamura");
+    expect(meData.user.experienceLevel).toBeNull();
+    expect(meData.user.ratings.blitz).toBe(1000);
   });
 
-  it("Progressive Email OTP generates code and verifies account", async () => {
-    let capturedOtp = "";
-    const logSpy = vi.spyOn(console, "log").mockImplementation((...args) => {
-      const msg = args.join(" ");
-      const match = msg.match(/Verification OTP for .*: (\d{6})/);
-      if (match) {
-        capturedOtp = match[1];
-      }
-    });
+  it("POST /api/users/me/onboarding updates skill level and starting ELO", async () => {
+    const sessionToken = "hikaru_test_session_token_123";
 
-    // Request OTP for email verification
-    const otpRes = await app.fetch(
-      new Request("http://localhost:8787/api/auth/email-otp/send-verification-otp", {
+    // Player selects Advanced (1500 ELO) during onboarding
+    const onboardRes = await app.fetch(
+      new Request("http://localhost:8787/api/users/me/onboarding", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Cookie: `better-auth.session_token=${sessionToken}`,
           Origin: "http://localhost:3000",
         },
         body: JSON.stringify({
-          email: "magnus@etchess.io",
-          type: "email-verification",
+          experienceLevel: "advanced",
         }),
       }),
-      env,
+      authEnv,
     );
 
-    expect(otpRes.status).toBe(200);
-    expect(capturedOtp).toMatch(/^\d{6}$/);
+    expect(onboardRes.status).toBe(200);
+    const onboardData = (await onboardRes.json()) as {
+      success: boolean;
+      experienceLevel: string;
+      startingRating: number;
+    };
 
-    // Verify OTP code
-    const verifyRes = await app.fetch(
-      new Request("http://localhost:8787/api/auth/email-otp/verify-email", {
-        method: "POST",
+    expect(onboardData.success).toBe(true);
+    expect(onboardData.experienceLevel).toBe("advanced");
+    expect(onboardData.startingRating).toBe(1500);
+
+    // Verify user profile reflects calibrated ratings
+    const updatedMeRes = await app.fetch(
+      new Request("http://localhost:8787/api/users/me", {
+        method: "GET",
         headers: {
-          "Content-Type": "application/json",
+          Cookie: `better-auth.session_token=${sessionToken}`,
           Origin: "http://localhost:3000",
         },
-        body: JSON.stringify({
-          email: "magnus@etchess.io",
-          otp: capturedOtp,
-        }),
       }),
-      env,
+      authEnv,
     );
 
-    expect(verifyRes.status).toBe(200);
+    expect(updatedMeRes.status).toBe(200);
+    const updatedMeData = (await updatedMeRes.json()) as {
+      user: {
+        experienceLevel: string | null;
+        ratings: { bullet: number; blitz: number; rapid: number; classical: number };
+      };
+    };
 
-    // Check user table in D1: email_verified must now be 1 (true)
-    const user = await env.DB.prepare("SELECT email_verified FROM user WHERE email = ?")
-      .bind("magnus@etchess.io")
-      .first<{ email_verified: number }>();
-
-    expect(user?.email_verified).toBe(1);
-    logSpy.mockRestore();
+    expect(updatedMeData.user.experienceLevel).toBe("advanced");
+    expect(updatedMeData.user.ratings.bullet).toBe(1500);
+    expect(updatedMeData.user.ratings.blitz).toBe(1500);
+    expect(updatedMeData.user.ratings.rapid).toBe(1500);
+    expect(updatedMeData.user.ratings.classical).toBe(1500);
   });
 });

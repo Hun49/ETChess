@@ -16,6 +16,7 @@ export const user = sqliteTable("user", {
   role: text("role").notNull().default("user"), // 'user' | 'admin' | 'moderator'
   isBanned: integer("is_banned", { mode: "boolean" }).notNull().default(false),
   banExpiresAt: integer("ban_expires_at", { mode: "timestamp" }),
+  experienceLevel: text("experience_level").default("intermediate"),
 });
 
 export const session = sqliteTable("session", {

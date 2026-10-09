@@ -19,6 +19,26 @@ import { sound } from "../lib/sound";
 
 export type GameMode = "idle" | "matchmaking" | "online" | "bot" | "pass_and_play";
 export type BoardTheme = "classic" | "wood" | "blue" | "dark" | "slate" | "emerald" | "ocean";
+export type GuestSkillLevel = "beginner" | "intermediate" | "advanced" | "master";
+
+export interface AppNotification {
+  id: string;
+  type: "challenge" | "match_result" | "announcement";
+  title: string;
+  message: string;
+  timestamp: number;
+  read: boolean;
+  data?: {
+    challengeId?: string;
+    fromUser?: string;
+    timeControl?: string;
+    rated?: boolean;
+    result?: string;
+    ratingDiff?: number;
+    opponent?: string;
+  };
+}
+
 export type AppView =
   | "home"
   | "play_online"
@@ -63,6 +83,30 @@ export interface GameSettings {
 }
 
 export interface GameState {
+  // Guest Identity
+  isGuest: boolean;
+  guestId: string;
+  guestName: string;
+  guestSkillLevel: GuestSkillLevel;
+  setGuestSkillLevel: (level: GuestSkillLevel) => void;
+  setIsGuest: (isGuest: boolean) => void;
+
+  // Notification Drawer
+  isNotificationDrawerOpen: boolean;
+  toggleNotificationDrawer: () => void;
+  closeNotificationDrawer: () => void;
+  notifications: AppNotification[];
+  addNotification: (n: Omit<AppNotification, "id" | "timestamp" | "read">) => void;
+  removeNotification: (id: string) => void;
+  markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
+  clearNotifications: () => void;
+
+  // Verify Email Modal
+  isVerifyModalOpen: boolean;
+  openVerifyModal: () => void;
+  closeVerifyModal: () => void;
+
   // Navigation & Screen View
   activeView: AppView;
   setActiveView: (view: AppView) => void;
@@ -127,10 +171,12 @@ export interface GameState {
 
   // Sound & Modals
   isSoundMuted: boolean;
-  activeModal: "auth" | "profile" | "play" | "leaderboard" | "game_over" | null;
+  activeModal: "auth" | "profile" | "play" | "leaderboard" | "game_over" | "onboarding" | null;
 
   // Actions
-  openModal: (modal: "auth" | "profile" | "play" | "leaderboard" | "game_over") => void;
+  openModal: (
+    modal: "auth" | "profile" | "play" | "leaderboard" | "game_over" | "onboarding",
+  ) => void;
   closeModal: () => void;
   toggleSound: () => void;
   setBoardTheme: (theme: BoardTheme) => void;
@@ -186,7 +232,79 @@ const TC_CONFIG: Record<TimeControlKey, { initialMs: number; incMs: number }> = 
   "30+0": { initialMs: 30 * 60 * 1000, incMs: 0 },
 };
 
+function getInitialGuest(): { id: string; name: string } {
+  if (typeof window === "undefined") {
+    return { id: "1001", name: "Guest #1001" };
+  }
+  let id = localStorage.getItem("etchess_guest_id");
+  if (!id) {
+    id = Math.floor(1000 + Math.random() * 9000).toString();
+    localStorage.setItem("etchess_guest_id", id);
+  }
+  return { id, name: `Guest #${id}` };
+}
+
+const initialGuest = getInitialGuest();
+
 export const useGameStore = create<GameState>((set, get) => ({
+  // Guest Identity
+  isGuest: true,
+  guestId: initialGuest.id,
+  guestName: initialGuest.name,
+  guestSkillLevel: "intermediate",
+  setGuestSkillLevel: (level) => set({ guestSkillLevel: level }),
+  setIsGuest: (isGuest) => set({ isGuest }),
+
+  // Notification Drawer
+  isNotificationDrawerOpen: false,
+  toggleNotificationDrawer: () =>
+    set((s) => ({ isNotificationDrawerOpen: !s.isNotificationDrawerOpen })),
+  closeNotificationDrawer: () => set({ isNotificationDrawerOpen: false }),
+  notifications: [
+    {
+      id: "welcome-notice",
+      type: "announcement",
+      title: "Welcome to ET Chess!",
+      message:
+        "Zero-latency chess engine ready. Play bots, local pass-and-play, or online casual matches.",
+      timestamp: Date.now(),
+      read: false,
+    },
+  ],
+  addNotification: (n) =>
+    set((s) => ({
+      notifications: [
+        {
+          ...n,
+          id:
+            typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : Math.random().toString(36),
+          timestamp: Date.now(),
+          read: false,
+        },
+        ...s.notifications,
+      ],
+    })),
+  removeNotification: (id) =>
+    set((s) => ({ notifications: s.notifications.filter((item) => item.id !== id) })),
+  markNotificationRead: (id) =>
+    set((s) => ({
+      notifications: s.notifications.map((item) =>
+        item.id === id ? { ...item, read: true } : item,
+      ),
+    })),
+  markAllNotificationsRead: () =>
+    set((s) => ({
+      notifications: s.notifications.map((item) => ({ ...item, read: true })),
+    })),
+  clearNotifications: () => set({ notifications: [] }),
+
+  // Verify Email Modal
+  isVerifyModalOpen: false,
+  openVerifyModal: () => set({ isVerifyModalOpen: true }),
+  closeVerifyModal: () => set({ isVerifyModalOpen: false }),
+
   activeView: "home",
   setActiveView: (view) => set({ activeView: view }),
   mode: "idle",

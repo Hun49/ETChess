@@ -1,27 +1,86 @@
 import type { TimeControlKey } from "@etchess/types";
-import { Clock, Flame, Shield, Sparkles, Zap } from "lucide-react";
+import { AlertCircle, Clock, Flame, Shield, Sparkles, User, Zap } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
+import type { GuestSkillLevel } from "../store/gameStore";
 import { useGameStore } from "../store/gameStore";
 
 export const PlayOnlineView: React.FC = () => {
-  const { joinMatchmaking } = useGameStore();
+  const { joinMatchmaking, isGuest, guestName, guestSkillLevel, setGuestSkillLevel, openModal } =
+    useGameStore();
 
   const [selectedTc, setSelectedTc] = useState<TimeControlKey>("3+2");
-  const [rated, setRated] = useState(true);
+  const [rated, setRated] = useState(!isGuest);
   const [fastMatch, setFastMatch] = useState(true);
 
   const handleFindMatch = () => {
-    joinMatchmaking(selectedTc, rated);
+    // Guests are strictly unrated and match with other guests in their chosen skill level
+    joinMatchmaking(selectedTc, isGuest ? false : rated);
   };
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 py-4 pb-16">
       {/* Title */}
       <div>
-        <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">Play Online</h1>
-        <p className="text-xs text-[#8ba3a8] mt-1">Choose your time control</p>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+            {isGuest ? "Guest Matchmaking" : "Play Online"}
+          </h1>
+          {isGuest && (
+            <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-xs font-bold text-amber-400">
+              {guestName} • Unrated
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-[#8ba3a8] mt-1">
+          {isGuest
+            ? "Pair strictly with other guests searching online in your selected skill tier."
+            : "Choose your time control and compete on the global leaderboard."}
+        </p>
       </div>
+
+      {/* Guest Mode Banner & Skill Tier Selection */}
+      {isGuest && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-950/20 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+              Choose Your Skill Tier
+            </span>
+            <button
+              type="button"
+              onClick={() => openModal("auth")}
+              className="text-xs font-bold text-[#00e699] hover:underline cursor-pointer"
+            >
+              Sign Up for Rated Leaderboard →
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {(
+              [
+                { tier: "beginner", label: "Beginner", desc: "Learning rules" },
+                { tier: "intermediate", label: "Intermediate", desc: "Club player" },
+                { tier: "advanced", label: "Advanced", desc: "Experienced" },
+                { tier: "master", label: "Master", desc: "Expert / GM" },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.tier}
+                type="button"
+                onClick={() => setGuestSkillLevel(item.tier)}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  guestSkillLevel === item.tier
+                    ? "border-[#00e699] bg-[#00e699]/15 text-white ring-1 ring-[#00e699] shadow-md shadow-[#00e699]/10"
+                    : "border-[#14282c] bg-[#0b171a] text-[#8ba3a8] hover:border-[#1a383e] hover:text-white"
+                }`}
+              >
+                <div className="text-xs font-bold text-white capitalize">{item.label}</div>
+                <div className="text-[10px] text-[#587277] mt-0.5">{item.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Time Controls Container */}
       <div className="space-y-5 rounded-2xl border border-[#14282c] bg-[#0b171a] p-6 shadow-xl">
@@ -176,23 +235,30 @@ export const PlayOnlineView: React.FC = () => {
             onClick={handleFindMatch}
             className="w-full rounded-xl bg-[#00e699] py-3.5 text-center text-sm font-extrabold text-neutral-950 shadow-lg shadow-[#00e699]/20 hover:bg-[#00e699]/90 transition-all cursor-pointer"
           >
-            Find Match
+            {isGuest ? `Find Guest Match (${guestSkillLevel.toUpperCase()})` : "Find Match"}
           </button>
         </div>
 
         {/* Bottom Options Row */}
         <div className="pt-2 flex items-center justify-around border-t border-[#14282c] text-xs text-[#8ba3a8]">
-          {/* Rated Toggle */}
-          <button
-            type="button"
-            onClick={() => setRated(!rated)}
-            className="flex items-center gap-2 hover:text-white transition-colors"
-          >
-            <Shield className={`h-4 w-4 ${rated ? "text-[#00e699]" : "text-[#587277]"}`} />
-            <span className={rated ? "text-white font-medium" : ""}>
-              {rated ? "Rated" : "Casual"}
-            </span>
-          </button>
+          {/* Rated / Casual Indicator */}
+          {isGuest ? (
+            <div className="flex items-center gap-1.5 text-amber-400">
+              <Shield className="h-4 w-4 text-amber-400" />
+              <span>Casual (Guest Unrated)</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setRated(!rated)}
+              className="flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
+            >
+              <Shield className={`h-4 w-4 ${rated ? "text-[#00e699]" : "text-[#587277]"}`} />
+              <span className={rated ? "text-white font-medium" : ""}>
+                {rated ? "Rated" : "Casual"}
+              </span>
+            </button>
+          )}
 
           {/* Standard Chess Indicator */}
           <div className="flex items-center gap-2">
@@ -204,7 +270,7 @@ export const PlayOnlineView: React.FC = () => {
           <button
             type="button"
             onClick={() => setFastMatch(!fastMatch)}
-            className="flex items-center gap-2 hover:text-white transition-colors"
+            className="flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
           >
             <Zap className={`h-4 w-4 ${fastMatch ? "text-[#00e699]" : "text-[#587277]"}`} />
             <span className={fastMatch ? "text-white font-medium" : ""}>Fast Match</span>

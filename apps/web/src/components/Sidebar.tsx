@@ -18,7 +18,7 @@ import { type AppView, useGameStore } from "../store/gameStore";
 import { VerifiedBadge } from "./VerifiedBadge";
 
 export const Sidebar: React.FC = () => {
-  const { activeView, setActiveView, openModal } = useGameStore();
+  const { activeView, setActiveView, openModal, guestName } = useGameStore();
   const { data: session } = useSession();
   const [playMenuOpen, setPlayMenuOpen] = useState(true);
 
@@ -31,35 +31,23 @@ export const Sidebar: React.FC = () => {
     activeView === "match_found" ||
     activeView === "game";
 
-  const userName = session?.user?.name || "AlexRook";
+  const userName = session?.user?.name || guestName;
 
   return (
     <aside className="hidden md:flex flex-col w-60 shrink-0 bg-[#081214] border-r border-[#14282c] select-none h-screen sticky top-0">
-      {/* Brand Header */}
-      <div className="flex items-center gap-3 px-5 py-6 border-b border-[#14282c]/60">
+      {/* Brand Header - Clean Text Typography */}
+      <div className="flex items-center px-6 py-6 border-b border-[#14282c]/60">
         <button
           type="button"
           onClick={() => setActiveView("home")}
-          className="flex items-center gap-2.5 text-left focus:outline-none group cursor-pointer"
+          className="text-left focus:outline-none group cursor-pointer"
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#00e699] text-neutral-950 shadow-md shadow-[#00e699]/20 font-black text-lg">
-            <svg
-              className="w-5 h-5 fill-current"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <title>ET Chess Knight</title>
-              <path d="M19 22H5v-2h14v2zm-2.5-4H7.5l.5-4h8l.5 4zm-4.5-6h-2V7h2v5zm4-6H8V4h8v2z" />
-            </svg>
-          </div>
-          <div>
-            <span className="font-extrabold text-base tracking-tight text-white group-hover:text-[#00e699] transition-colors">
-              ET-Chess
-            </span>
-            <p className="text-[10px] text-[#8ba3a8] font-medium leading-none mt-0.5">
-              Play. Learn. Improve.
-            </p>
-          </div>
+          <span className="font-black text-xl tracking-tight text-white group-hover:text-[#00e699] transition-colors">
+            ET-Chess
+          </span>
+          <p className="text-[10px] text-[#8ba3a8] font-medium leading-none mt-1">
+            Play. Learn. Improve.
+          </p>
         </button>
       </div>
 
@@ -237,8 +225,8 @@ export const Sidebar: React.FC = () => {
               <User className="h-4 w-4" />
             </div>
             <div className="text-left overflow-hidden">
-              <div className="text-xs font-bold text-white">Sign In / Register</div>
-              <div className="text-[10px] text-[#8ba3a8] font-medium">Guest Mode</div>
+              <div className="text-xs font-bold text-white truncate">{guestName}</div>
+              <div className="text-[10px] text-[#00e699] font-medium">Click to Sign Up</div>
             </div>
           </button>
         )}

@@ -336,6 +336,17 @@ export const usersRoute = new Hono<{
       classical: 1500,
     };
 
+    const [userRow] = await db
+      .select({ experienceLevel: schema.user.experienceLevel })
+      .from(schema.user)
+      .where(eq(schema.user.id, user.id))
+      .limit(1);
+
+    const experienceLevel =
+      userRow?.experienceLevel ??
+      (user as { experienceLevel?: string | null }).experienceLevel ??
+      null;
+
     return c.json({
       user: {
         id: user.id,
@@ -343,6 +354,7 @@ export const usersRoute = new Hono<{
         email: user.email,
         role: user.role,
         image: user.image,
+        experienceLevel,
         ratings: ratingsRow
           ? {
               bullet: Math.round(ratingsRow.bulletRating),
@@ -354,6 +366,96 @@ export const usersRoute = new Hono<{
       },
     });
   })
+
+  // One-time skill level onboarding for new players
+  .post(
+    "/me/onboarding",
+    requireAuth,
+    zValidator(
+      "json",
+      z.object({
+        experienceLevel: z.enum(["beginner", "intermediate", "advanced"]),
+      }),
+    ),
+    async (c) => {
+      const user = c.get("user");
+      if (!user) {
+        return c.json(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Authentication required",
+            },
+          },
+          401,
+        );
+      }
+      const { experienceLevel } = c.req.valid("json");
+      const db = drizzle(c.env.DB, { schema });
+
+      const startRating =
+        experienceLevel === "beginner" ? 500 : experienceLevel === "advanced" ? 1500 : 1000;
+
+      // Update user experience level
+      await db
+        .update(schema.user)
+        .set({
+          experienceLevel,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.user.id, user.id));
+
+      // Check current game count to prevent resetting active players
+      const [currentRatings] = await db
+        .select()
+        .from(schema.ratings)
+        .where(eq(schema.ratings.userId, user.id));
+
+      const totalGames =
+        (currentRatings?.bulletGames || 0) +
+        (currentRatings?.blitzGames || 0) +
+        (currentRatings?.rapidGames || 0) +
+        (currentRatings?.classicalGames || 0);
+
+      if (!currentRatings || totalGames === 0) {
+        // Reset or initialize ratings to chosen skill level
+        await db
+          .insert(schema.ratings)
+          .values({
+            userId: user.id,
+            bulletRating: startRating,
+            bulletRd: 350,
+            bulletVol: 0.06,
+            blitzRating: startRating,
+            blitzRd: 350,
+            blitzVol: 0.06,
+            rapidRating: startRating,
+            rapidRd: 350,
+            rapidVol: 0.06,
+            classicalRating: startRating,
+            classicalRd: 350,
+            classicalVol: 0.06,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: schema.ratings.userId,
+            set: {
+              bulletRating: startRating,
+              blitzRating: startRating,
+              rapidRating: startRating,
+              classicalRating: startRating,
+              updatedAt: new Date(),
+            },
+          });
+      }
+
+      return c.json({
+        success: true,
+        experienceLevel,
+        startingRating: startRating,
+      });
+    },
+  )
 
   // Current active live game for authenticated user (for resume/rejoin)
   .get("/me/live-game", requireAuth, async (c) => {

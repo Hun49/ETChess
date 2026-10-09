@@ -51,8 +51,9 @@
   },
   "vars": {
     "ENVIRONMENT": "development",
-    "BETTER_AUTH_URL": "http://localhost:8787",
-    "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com"
+    "BETTER_AUTH_URL": "http://localhost:3000",
+    "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com",
+    "GITHUB_CLIENT_ID": "Ov23lijIriCE1INfTn73"
   },
   "env": {
     "staging": {

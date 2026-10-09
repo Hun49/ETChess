@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS \`user\` (
 	\`updated_at\` integer NOT NULL,
 	\`role\` text DEFAULT 'user' NOT NULL,
 	\`is_banned\` integer DEFAULT false NOT NULL,
-	\`ban_expires_at\` integer
+	\`ban_expires_at\` integer,
+	\`experience_level\` text DEFAULT 'intermediate'
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`user_email_unique\` ON \`user\` (\`email\`);

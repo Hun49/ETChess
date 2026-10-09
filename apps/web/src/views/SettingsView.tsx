@@ -8,6 +8,7 @@ import {
   HelpCircle,
   Layout,
   Lock,
+  LogOut,
   Moon,
   Palette,
   Shield,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
+import { signOut, useSession } from "../lib/api";
 import { type BoardTheme, useGameStore } from "../store/gameStore";
 
 export const SettingsView: React.FC = () => {
@@ -30,10 +32,28 @@ export const SettingsView: React.FC = () => {
     setBoardTheme,
     isSoundMuted,
     toggleSound,
+    isGuest,
+    guestName,
+    openModal,
+    setIsGuest,
   } = useGameStore();
+  const { data: session } = useSession();
 
   const [activeTab, setActiveTab] = useState<"board" | "audio" | "gameplay" | "account">("board");
   const [savedToast, setSavedToast] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await signOut();
+      setIsGuest(true);
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to sign out:", err);
+      setIsSigningOut(false);
+    }
+  };
 
   const triggerToast = () => {
     setSavedToast(true);
@@ -444,15 +464,57 @@ export const SettingsView: React.FC = () => {
               <div className="space-y-3">
                 <div className="flex items-center justify-between rounded-xl border border-[#162e33] bg-[#0e1e22] p-3.5">
                   <span className="text-xs text-[#8ba3a8]">Username</span>
-                  <span className="text-xs font-bold text-white">AlexRook</span>
+                  <span className="text-xs font-bold text-white">
+                    {session?.user?.name || (isGuest ? guestName : "Anonymous")}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between rounded-xl border border-[#162e33] bg-[#0e1e22] p-3.5">
                   <span className="text-xs text-[#8ba3a8]">Email</span>
-                  <span className="text-xs font-bold text-white">alex.rook@etchess.io</span>
+                  <span className="text-xs font-bold text-white font-mono">
+                    {session?.user?.email || (isGuest ? "Not configured (Guest)" : "None")}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between rounded-xl border border-[#162e33] bg-[#0e1e22] p-3.5">
                   <span className="text-xs text-[#8ba3a8]">Account Status</span>
-                  <span className="text-xs font-bold text-[#00e699]">Active • Verified</span>
+                  <span
+                    className={`text-xs font-bold ${
+                      session?.user?.emailVerified
+                        ? "text-[#00e699]"
+                        : session?.user
+                          ? "text-amber-400"
+                          : "text-[#8ba3a8]"
+                    }`}
+                  >
+                    {session?.user?.emailVerified
+                      ? "Active • Verified"
+                      : session?.user
+                        ? "Active • Unverified"
+                        : "Guest Session (Unregistered)"}
+                  </span>
+                </div>
+
+                {/* Account Actions */}
+                <div className="pt-2">
+                  {session?.user ? (
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      disabled={isSigningOut}
+                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-red-500/10 border border-red-500/25 px-4 py-3 text-xs font-bold text-red-400 hover:bg-red-500/20 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      <span>{isSigningOut ? "Signing Out..." : "Sign Out of Account"}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openModal("auth")}
+                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#00e699] px-4 py-3 text-xs font-bold text-neutral-950 hover:bg-[#00c885] transition-all cursor-pointer shadow-md shadow-[#00e699]/10"
+                    >
+                      <User className="h-4 w-4" />
+                      <span>Sign In / Create Account</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

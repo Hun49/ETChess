@@ -1,9 +1,13 @@
 import type React from "react";
+import { useEffect } from "react";
 import { AuthModal } from "./components/AuthModal";
 import { LeaderboardModal } from "./components/LeaderboardModal";
 import { MobileNav } from "./components/MobileNav";
+import { NotificationDrawer } from "./components/NotificationDrawer";
 import { Sidebar } from "./components/Sidebar";
+import { SkillOnboardingModal } from "./components/SkillOnboardingModal";
 import { TopBar } from "./components/TopBar";
+import { useSession } from "./lib/api";
 import { useGameStore } from "./store/gameStore";
 import { AnalysisView } from "./views/AnalysisView";
 import { GameHistoryView } from "./views/GameHistoryView";
@@ -19,7 +23,13 @@ import { SearchingView } from "./views/SearchingView";
 import { SettingsView } from "./views/SettingsView";
 
 export const App: React.FC = () => {
-  const { activeView } = useGameStore();
+  const { activeView, setIsGuest } = useGameStore();
+  const { data: session } = useSession();
+
+  // Synchronize global guest state with authentication session
+  useEffect(() => {
+    setIsGuest(!session?.user);
+  }, [session?.user, setIsGuest]);
 
   const renderActiveView = () => {
     switch (activeView) {
@@ -60,7 +70,7 @@ export const App: React.FC = () => {
 
       {/* Main App Column */}
       <div className="flex flex-1 flex-col min-w-0 h-full overflow-hidden">
-        {/* Top Header Bar with Search, Latency, Sound, Avatar */}
+        {/* Top Header Bar with Latency, Sound, Bell, Avatar */}
         <TopBar />
 
         {/* Dynamic Screen View Router */}
@@ -70,9 +80,11 @@ export const App: React.FC = () => {
         <MobileNav />
       </div>
 
-      {/* Global Modals */}
+      {/* Global Modals & Drawers */}
       <AuthModal />
       <LeaderboardModal />
+      <NotificationDrawer />
+      <SkillOnboardingModal />
     </div>
   );
 };

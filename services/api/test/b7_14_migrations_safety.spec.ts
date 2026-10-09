@@ -11,6 +11,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import sql0000 from "../drizzle/0000_crazy_young_avengers.sql?raw";
 import sql0001 from "../drizzle/0001_keen_shen.sql?raw";
+import sql0002 from "../drizzle/0002_user_experience_level.sql?raw";
 
 function parseSqlStatements(sql: string): string[] {
   return sql
@@ -21,9 +22,10 @@ function parseSqlStatements(sql: string): string[] {
 }
 
 describe("B7-14 — Database Migration Safety & Upgrades", () => {
-  it("1. applies complete migration sequence (0000 -> 0001) to a fresh database without errors", async () => {
+  it("1. applies complete migration sequence (0000 -> 0001 -> 0002) to a fresh database without errors", async () => {
     const stmts0000 = parseSqlStatements(sql0000);
     const stmts0001 = parseSqlStatements(sql0001);
+    const stmts0002 = parseSqlStatements(sql0002);
 
     for (const stmt of stmts0000) {
       await env.DB.exec(`${stmt};`);
@@ -31,6 +33,11 @@ describe("B7-14 — Database Migration Safety & Upgrades", () => {
 
     // Execute 0001 statements (must not fail with duplicate column or syntax error)
     for (const stmt of stmts0001) {
+      await env.DB.exec(`${stmt};`);
+    }
+
+    // Execute 0002 statements
+    for (const stmt of stmts0002) {
       await env.DB.exec(`${stmt};`);
     }
 
@@ -50,6 +57,11 @@ describe("B7-14 — Database Migration Safety & Upgrades", () => {
     expect(tableNames).toContain("audit_logs");
     expect(tableNames).toContain("challenges");
     expect(tableNames).toContain("friends");
+
+    // Verify experience_level added on user table
+    const userInfo = await env.DB.prepare("PRAGMA table_info(user)").all<{ name: string }>();
+    const userCols = (userInfo.results ?? []).map((r) => r.name);
+    expect(userCols).toContain("experience_level");
 
     // Verify columns added in 0001 exist on ratings table
     const ratingsInfo = await env.DB.prepare("PRAGMA table_info(ratings)").all<{ name: string }>();

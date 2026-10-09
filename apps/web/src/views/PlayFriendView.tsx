@@ -11,19 +11,29 @@ import {
   Radio,
   Share2,
   Shield,
+  ShieldAlert,
   Shuffle,
   Sparkles,
+  UserPlus,
   Users,
   X,
   Zap,
 } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
+import { useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
 
 export const PlayFriendView: React.FC = () => {
-  const { friendChallenge, createFriendChallenge, cancelFriendChallenge, setActiveView } =
-    useGameStore();
+  const {
+    friendChallenge,
+    createFriendChallenge,
+    cancelFriendChallenge,
+    setActiveView,
+    isGuest,
+    openModal,
+  } = useGameStore();
+  const { data: session } = useSession();
 
   const [selectedTc, setSelectedTc] = useState<TimeControlKey>("3+2");
   const [selectedColor, setSelectedColor] = useState<"white" | "black" | "random">("random");
@@ -93,7 +103,7 @@ export const PlayFriendView: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveView("home")}
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#14282c] bg-[#0b171a] text-neutral-300 hover:border-[#00e699] hover:text-white transition-colors"
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#14282c] bg-[#0b171a] text-neutral-300 hover:border-[#00e699] hover:text-white transition-colors cursor-pointer"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
@@ -106,8 +116,39 @@ export const PlayFriendView: React.FC = () => {
           </div>
         </div>
 
-        {/* SCREEN 12: Challenge Created & Waiting state */}
-        {friendChallenge ? (
+        {/* Guest Lockout State */}
+        {isGuest || !session?.user ? (
+          <div className="rounded-3xl border border-[#14282c] bg-[#0b171a] p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              <ShieldAlert className="h-8 w-8" />
+            </div>
+            <div className="max-w-md mx-auto space-y-2">
+              <h2 className="text-xl font-black text-white">Registered Account Required</h2>
+              <p className="text-xs text-[#8ba3a8] leading-relaxed">
+                Guest accounts can only play casual unrated matchmaking against other online guests
+                or practice against the computer. To add friends, generate private challenge links,
+                and play friend games, please create a free account.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => openModal("auth")}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[#00e699] px-6 py-3 text-xs font-black text-[#081214] shadow-lg shadow-[#00e699]/15 hover:bg-[#00c885] transition-all cursor-pointer"
+              >
+                <UserPlus className="h-4 w-4" />
+                <span>Create Free Account</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("play_online")}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-[#162e33] bg-[#0e1e22] px-6 py-3 text-xs font-bold text-white hover:bg-[#122429] transition-all cursor-pointer"
+              >
+                <span>Play Guest Online</span>
+              </button>
+            </div>
+          </div>
+        ) : friendChallenge ? (
           <div className="rounded-3xl border border-[#14282c] bg-[#0b171a] p-6 sm:p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
             <div className="absolute right-0 top-0 h-64 w-64 translate-x-12 -translate-y-12 rounded-full bg-[#00e699]/10 blur-3xl pointer-events-none" />
 

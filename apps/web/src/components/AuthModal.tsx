@@ -1,36 +1,13 @@
-import {
-  AlertCircle,
-  ArrowRight,
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  Loader2,
-  Lock,
-  Mail,
-  ShieldCheck,
-  Sparkles,
-  User,
-  X,
-} from "lucide-react";
+import { AlertCircle, Loader2, Sparkles, User, X } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
-import { authClient, signIn, signUp } from "../lib/api";
+import { signIn } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
 
 export const AuthModal: React.FC = () => {
-  const { activeModal, closeModal } = useGameStore();
-  const [tab, setTab] = useState<"signin" | "signup">("signin");
-
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  const [loading, setLoading] = useState(false);
+  const { activeModal, closeModal, setIsGuest } = useGameStore();
+  const [loadingProvider, setLoadingProvider] = useState<"google" | "github" | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Close on Escape key
   useEffect(() => {
@@ -45,87 +22,34 @@ export const AuthModal: React.FC = () => {
 
   if (activeModal !== "auth") return null;
 
-  // Real-time password validation logic
-  const isPasswordEntered = password.length > 0;
-  const isConfirmEntered = confirmPassword.length > 0;
-  const isLengthValid = password.length >= 8;
-  const isMatch = isPasswordEntered && isConfirmEntered && password === confirmPassword;
-  const isMismatch = isConfirmEntered && password !== confirmPassword;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSocialSignIn = async (provider: "google" | "github") => {
     setErrorMessage(null);
-    setSuccessMessage(null);
-
-    if (tab === "signup") {
-      if (!name.trim()) {
-        setErrorMessage("Please enter an account name.");
-        return;
-      }
-      if (!isLengthValid) {
-        setErrorMessage("Password must be at least 8 characters long.");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setErrorMessage("Passwords do not match. Please verify your password entry.");
-        return;
-      }
-    }
-
-    setLoading(true);
+    setLoadingProvider(provider);
 
     try {
-      if (tab === "signin") {
-        const res = await signIn.email({
-          email: email.trim(),
-          password,
-        });
-        if (res.error) {
-          setErrorMessage(
-            res.error.message || "Failed to sign in. Please verify your credentials.",
-          );
-        } else {
-          setSuccessMessage("Welcome back! Signing in...");
-          setTimeout(() => {
-            closeModal();
-          }, 800);
-        }
-      } else {
-        const res = await signUp.email({
-          email: email.trim(),
-          password,
-          name: name.trim(),
-        });
-        if (res.error) {
-          setErrorMessage(
-            res.error.message || "Failed to create account. Please check your inputs.",
-          );
-        } else {
-          setSuccessMessage("Account created successfully! Welcome to ET Chess.");
-          setTimeout(() => {
-            closeModal();
-          }, 1000);
-        }
+      const callbackURL = window.location.origin;
+      const res = await signIn.social({
+        provider,
+        callbackURL,
+      });
+
+      if (res?.error) {
+        setErrorMessage(res.error.message || `Failed to initiate ${provider} sign in.`);
+        setLoadingProvider(null);
       }
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "An unexpected error occurred");
-    } finally {
-      setLoading(false);
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : `An unexpected error occurred during ${provider} sign in.`,
+      );
+      setLoadingProvider(null);
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setErrorMessage(null);
-    setLoading(true);
-    try {
-      await authClient.signIn.social({
-        provider: "google",
-        callbackURL: window.location.origin,
-      });
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "Failed to initiate Google sign in");
-      setLoading(false);
-    }
+  const handleGuestPlay = () => {
+    setIsGuest(true);
+    closeModal();
   };
 
   return (
@@ -143,288 +67,122 @@ export const AuthModal: React.FC = () => {
           type="button"
           onClick={closeModal}
           aria-label="Close modal"
-          className="absolute right-4 top-4 rounded-xl p-2 text-[#8ba3a8] hover:text-white hover:bg-[#0e1e22] border border-transparent hover:border-[#162e33] transition-colors"
+          className="absolute right-4 top-4 rounded-xl p-2 text-[#8ba3a8] hover:text-white hover:bg-[#0e1e22] border border-transparent hover:border-[#162e33] transition-colors cursor-pointer"
         >
           <X className="h-4 w-4" />
         </button>
 
         {/* Modal Header */}
         <div className="text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#00e699]/20 to-[#0e1e22] border border-[#00e699]/40 text-[#00e699] font-black text-xl mb-3 shadow-lg shadow-[#00e699]/10">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#00e699]/20 to-[#0e1e22] border border-[#00e699]/40 text-[#00e699] font-black text-2xl mb-4 shadow-lg shadow-[#00e699]/10">
             ET
           </div>
-          <h2 id="auth-modal-title" className="text-xl font-black text-white tracking-tight">
-            {tab === "signin" ? "Welcome Back" : "Create Account"}
+          <h2 id="auth-modal-title" className="text-2xl font-black text-white tracking-tight">
+            Welcome to ET Chess
           </h2>
-          <p className="mt-1 text-xs text-[#8ba3a8]">
-            {tab === "signin"
-              ? "Sign in to access your ratings, match history, and achievements"
-              : "Register your player identity to compete on the global leaderboard"}
+          <p className="mt-2 text-xs text-[#8ba3a8] leading-relaxed max-w-xs mx-auto">
+            Sign in with your verified social account to compete on the global leaderboard, track
+            live ratings, and save your match history.
           </p>
         </div>
 
-        {/* Google 1-Click Social Sign-In */}
-        <div className="mt-5">
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-3 rounded-2xl border border-[#162e33] bg-[#0e1e22] py-3 text-xs font-bold text-white hover:bg-[#122429] hover:border-[#22444c] transition-all disabled:opacity-50 shadow-sm"
-          >
-            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="#4285F4"
-                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.97 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-              />
-            </svg>
-            <span>Continue with Google</span>
-          </button>
-        </div>
-
-        {/* Divider */}
-        <div className="relative my-4 flex items-center justify-center">
-          <div className="w-full border-t border-[#14282c]" />
-          <span className="absolute bg-[#0b171a] px-3 text-[10px] uppercase font-bold text-[#587277]">
-            or continue with email
-          </span>
-        </div>
-
-        {/* Tab Switcher */}
-        <div className="flex rounded-xl bg-[#0e1e22] p-1 border border-[#14282c]">
-          <button
-            type="button"
-            onClick={() => {
-              setTab("signin");
-              setErrorMessage(null);
-              setSuccessMessage(null);
-            }}
-            className={`flex-1 rounded-lg py-2 text-xs font-bold transition-all ${
-              tab === "signin"
-                ? "bg-[#14282c] text-[#00e699] shadow-sm"
-                : "text-[#8ba3a8] hover:text-white"
-            }`}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setTab("signup");
-              setErrorMessage(null);
-              setSuccessMessage(null);
-            }}
-            className={`flex-1 rounded-lg py-2 text-xs font-bold transition-all ${
-              tab === "signup"
-                ? "bg-[#14282c] text-[#00e699] shadow-sm"
-                : "text-[#8ba3a8] hover:text-white"
-            }`}
-          >
-            Create Account
-          </button>
-        </div>
-
-        {/* Feedback Messages */}
+        {/* Error Alert */}
         {errorMessage && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-3.5 py-2.5 text-xs text-red-400 animate-shake">
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+          <div
+            role="alert"
+            className="mt-5 flex items-start gap-2.5 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>{errorMessage}</span>
           </div>
         )}
 
-        {successMessage && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#00e699]/30 bg-[#00e699]/10 px-3.5 py-2.5 text-xs text-[#00e699] animate-fade-in">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-[#00e699]" />
-            <span>{successMessage}</span>
-          </div>
-        )}
-
-        {/* Authentication Form */}
-        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-          {tab === "signup" && (
-            <div>
-              <label
-                className="block text-xs font-bold uppercase tracking-wider text-[#8ba3a8] mb-1.5"
-                htmlFor="account-name"
-              >
-                Account Name / Handle
-              </label>
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#587277]">
-                  <User className="h-4 w-4" />
-                </div>
-                <input
-                  id="account-name"
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. AlexRook"
-                  maxLength={32}
-                  className="w-full rounded-xl border border-[#162e33] bg-[#0e1e22] py-2.5 pl-9 pr-3 text-sm text-white placeholder-[#587277] focus:border-[#00e699] focus:outline-none transition-colors"
-                />
-              </div>
-            </div>
-          )}
-
-          <div>
-            <label
-              className="block text-xs font-bold uppercase tracking-wider text-[#8ba3a8] mb-1.5"
-              htmlFor="auth-email"
-            >
-              Email Address
-            </label>
-            <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#587277]">
-                <Mail className="h-4 w-4" />
-              </div>
-              <input
-                id="auth-email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@domain.com"
-                className="w-full rounded-xl border border-[#162e33] bg-[#0e1e22] py-2.5 pl-9 pr-3 text-sm text-white placeholder-[#587277] focus:border-[#00e699] focus:outline-none transition-colors"
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label
-                className="block text-xs font-bold uppercase tracking-wider text-[#8ba3a8]"
-                htmlFor="auth-password"
-              >
-                Password
-              </label>
-              {tab === "signup" && isPasswordEntered && (
-                <span
-                  className={`text-[10px] font-mono font-bold ${
-                    isLengthValid ? "text-[#00e699]" : "text-amber-400"
-                  }`}
-                >
-                  {isLengthValid ? "✓ Length OK (8+ chars)" : "At least 8 chars required"}
-                </span>
-              )}
-            </div>
-            <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#587277]">
-                <Lock className="h-4 w-4" />
-              </div>
-              <input
-                id="auth-password"
-                type={showPassword ? "text" : "password"}
-                required
-                minLength={tab === "signup" ? 8 : 6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••••"
-                className="w-full rounded-xl border border-[#162e33] bg-[#0e1e22] py-2.5 pl-9 pr-10 text-sm text-white placeholder-[#587277] focus:border-[#00e699] focus:outline-none transition-colors"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-[#587277] hover:text-white"
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Confirm Password (entered twice with real-time match check) */}
-          {tab === "signup" && (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label
-                  className="block text-xs font-bold uppercase tracking-wider text-[#8ba3a8]"
-                  htmlFor="auth-confirm-password"
-                >
-                  Confirm Password
-                </label>
-                {/* Inline match feedback */}
-                {isConfirmEntered && (
-                  <div className="flex items-center gap-1 text-[11px] font-bold">
-                    {isMatch ? (
-                      <span className="flex items-center gap-1 text-[#00e699]">
-                        <CheckCircle2 className="h-3 w-3" />
-                        <span>Passwords match</span>
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-red-400">
-                        <AlertCircle className="h-3 w-3" />
-                        <span>Passwords do not match</span>
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#587277]">
-                  <Lock className="h-4 w-4" />
-                </div>
-                <input
-                  id="auth-confirm-password"
-                  type={showConfirmPassword ? "text" : "password"}
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Repeat your password"
-                  className={`w-full rounded-xl border bg-[#0e1e22] py-2.5 pl-9 pr-10 text-sm text-white placeholder-[#587277] focus:outline-none transition-colors ${
-                    isConfirmEntered
-                      ? isMatch
-                        ? "border-[#00e699] focus:border-[#00e699]"
-                        : "border-red-500 focus:border-red-500"
-                      : "border-[#162e33] focus:border-[#00e699]"
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-[#587277] hover:text-white"
-                >
-                  {showConfirmPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Submit Button */}
+        {/* Social Action Buttons */}
+        <div className="mt-6 flex flex-col gap-3">
+          {/* Google Sign-In Button */}
           <button
-            type="submit"
-            disabled={loading || (tab === "signup" && (!isMatch || !isLengthValid))}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#00e699] py-3 text-sm font-black text-[#081214] shadow-lg shadow-[#00e699]/15 hover:bg-[#00c885] transition-all disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed mt-2"
+            type="button"
+            onClick={() => handleSocialSignIn("google")}
+            disabled={loadingProvider !== null}
+            className="w-full flex items-center justify-center gap-3 rounded-2xl border border-[#162e33] bg-[#0e1e22] py-3.5 px-4 text-xs font-bold text-white hover:bg-[#122429] hover:border-[#22444c] active:scale-[0.99] transition-all disabled:opacity-50 shadow-sm cursor-pointer"
           >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin text-[#081214]" />
+            {loadingProvider === "google" ? (
+              <Loader2 className="h-4 w-4 animate-spin text-[#00e699]" />
             ) : (
-              <>
-                <span>{tab === "signin" ? "Sign In" : "Create Account"}</span>
-                <ArrowRight className="h-4 w-4" />
-              </>
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.97 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                />
+              </svg>
             )}
+            <span>
+              {loadingProvider === "google" ? "Connecting to Google..." : "Continue with Google"}
+            </span>
           </button>
-        </form>
 
-        {/* Security / Terms notice */}
-        <div className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-[#587277]">
-          <ShieldCheck className="h-3.5 w-3.5 text-[#00e699]" />
-          <span>Secured with Better Auth & Glicko-2 validation</span>
+          {/* GitHub Sign-In Button */}
+          <button
+            type="button"
+            onClick={() => handleSocialSignIn("github")}
+            disabled={loadingProvider !== null}
+            className="w-full flex items-center justify-center gap-3 rounded-2xl border border-[#162e33] bg-[#0e1e22] py-3.5 px-4 text-xs font-bold text-white hover:bg-[#122429] hover:border-[#22444c] active:scale-[0.99] transition-all disabled:opacity-50 shadow-sm cursor-pointer"
+          >
+            {loadingProvider === "github" ? (
+              <Loader2 className="h-4 w-4 animate-spin text-[#00e699]" />
+            ) : (
+              <svg
+                className="h-4 w-4 shrink-0 fill-current text-white"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
+                />
+              </svg>
+            )}
+            <span>
+              {loadingProvider === "github" ? "Connecting to GitHub..." : "Continue with GitHub"}
+            </span>
+          </button>
+        </div>
+
+        {/* Divider */}
+        <div className="relative my-6 flex items-center justify-center">
+          <div className="w-full border-t border-[#14282c]" />
+          <span className="absolute bg-[#0b171a] px-3 text-[10px] uppercase font-bold text-[#587277]">
+            or explore
+          </span>
+        </div>
+
+        {/* Guest Play Button */}
+        <button
+          type="button"
+          onClick={handleGuestPlay}
+          className="w-full flex items-center justify-center gap-2 rounded-2xl border border-[#14282c] bg-transparent py-3 px-4 text-xs font-semibold text-[#8ba3a8] hover:text-white hover:bg-[#0e1e22] hover:border-[#162e33] active:scale-[0.99] transition-all cursor-pointer"
+        >
+          <User className="h-3.5 w-3.5" />
+          <span>Play as Guest (Casual Mode)</span>
+        </button>
+
+        {/* Footer info */}
+        <div className="mt-6 flex items-center justify-center gap-1.5 text-center text-[10px] text-[#587277]">
+          <Sparkles className="h-3 w-3 text-[#00e699]/70 shrink-0" />
+          <span>Verified instant access &bull; Zero passwords to remember</span>
         </div>
       </div>
     </dialog>

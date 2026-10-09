@@ -1,43 +1,37 @@
-import { Bell, Search, User, Volume2, VolumeX, Wifi } from "lucide-react";
+import { Bell, User, Volume2, VolumeX, Wifi } from "lucide-react";
 import type React from "react";
-import { useState } from "react";
 import { useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
 import { VerifiedBadge } from "./VerifiedBadge";
 
 export const TopBar: React.FC = () => {
-  const { mode, latencyMs, isSoundMuted, toggleSound, openModal, setActiveView } = useGameStore();
+  const {
+    mode,
+    latencyMs,
+    isSoundMuted,
+    toggleSound,
+    openModal,
+    setActiveView,
+    guestName,
+    notifications,
+    toggleNotificationDrawer,
+  } = useGameStore();
 
   const { data: session } = useSession();
-  const [searchQuery, setSearchQuery] = useState("");
 
-  const userName = session?.user?.name || "AlexRook";
+  const userName = session?.user?.name || guestName;
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
     <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-[#14282c] bg-[#081214]/90 px-4 md:px-8 backdrop-blur-md">
-      {/* Search Input matching mockup */}
-      <div className="flex-1 max-w-md">
-        <div className="relative">
-          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#587277]">
-            <Search className="h-4 w-4" />
-          </div>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search players, games, or openings..."
-            className="w-full rounded-xl border border-[#14282c] bg-[#0e1e22] py-2 pl-9 pr-8 text-xs text-white placeholder-[#587277] focus:border-[#00e699] focus:outline-none transition-colors"
-          />
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5">
-            <span className="rounded bg-[#14282c] px-1.5 py-0.5 text-[10px] font-mono text-[#587277]">
-              /
-            </span>
-          </div>
-        </div>
+      {/* Left Title / Breadcrumb */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-extrabold tracking-tight text-white">ET-Chess</span>
+        <span className="text-[10px] text-[#587277] font-mono">v1.0</span>
       </div>
 
       {/* Right Controls */}
-      <div className="flex items-center gap-3 ml-4">
+      <div className="flex items-center gap-3">
         {/* Real-time Latency (when in online match) */}
         {mode === "online" && (
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#0e1e22] border border-[#14282c] text-xs text-[#8ba3a8]">
@@ -68,17 +62,22 @@ export const TopBar: React.FC = () => {
           )}
         </button>
 
-        {/* Notifications Bell */}
+        {/* Notifications Bell (Opens Side Drawer) */}
         <button
           type="button"
+          onClick={toggleNotificationDrawer}
           aria-label="Notifications"
-          className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-[#14282c] bg-[#0e1e22] text-[#8ba3a8] hover:text-white transition-colors"
+          className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-[#14282c] bg-[#0e1e22] text-[#8ba3a8] hover:text-white transition-colors cursor-pointer"
         >
           <Bell className="h-4 w-4" />
-          <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#00e699]" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00e699] px-1 text-[9px] font-black text-neutral-950 shadow-sm">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
         </button>
 
-        {/* User Profile Avatar */}
+        {/* User Profile Avatar / Guest Mode */}
         {session?.user ? (
           <button
             type="button"
@@ -95,14 +94,19 @@ export const TopBar: React.FC = () => {
             </div>
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => openModal("auth")}
-            className="flex items-center gap-1.5 rounded-xl bg-[#00e699] px-3 py-1.5 text-xs font-bold text-neutral-950 shadow-sm hover:bg-[#00e699]/90 transition-all cursor-pointer"
-          >
-            <User className="h-3.5 w-3.5" />
-            <span>Sign In</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-block rounded-lg border border-[#162e33] bg-[#0e1e22] px-2.5 py-1 text-[11px] font-mono text-[#8ba3a8]">
+              {guestName}
+            </span>
+            <button
+              type="button"
+              onClick={() => openModal("auth")}
+              className="flex items-center gap-1.5 rounded-xl bg-[#00e699] px-3 py-1.5 text-xs font-bold text-neutral-950 shadow-sm hover:bg-[#00e699]/90 transition-all cursor-pointer"
+            >
+              <User className="h-3.5 w-3.5" />
+              <span>Sign In</span>
+            </button>
+          </div>
         )}
       </div>
     </header>

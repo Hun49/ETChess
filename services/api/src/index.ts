@@ -57,7 +57,29 @@ app.route("/health", healthRoute);
 // 5. Guest Session Endpoint (before general Better Auth handler)
 app.route("/api/auth/guest", guestRoute);
 
-// 6. Better Auth API Handlers
+// 6. Explicitly reject deprecated email/password authentication endpoints
+app.all("/api/auth/sign-up/email", (c) =>
+  c.json(
+    {
+      code: "EMAIL_PASSWORD_DISABLED",
+      message:
+        "Email and password authentication is disabled. Please use Google or GitHub sign in.",
+    },
+    400,
+  ),
+);
+app.all("/api/auth/sign-in/email", (c) =>
+  c.json(
+    {
+      code: "EMAIL_PASSWORD_DISABLED",
+      message:
+        "Email and password authentication is disabled. Please use Google or GitHub sign in.",
+    },
+    400,
+  ),
+);
+
+// 7. Better Auth API Handlers
 app.all("/api/auth/*", async (c) => {
   const auth = createAuth(c.env);
   try {
@@ -81,6 +103,17 @@ app.all("/api/auth/*", async (c) => {
     }
     throw error;
   }
+});
+
+// Diagnostic route to verify environment variables loaded into workerd memory
+app.get("/api/debug-auth-env", (c) => {
+  return c.json({
+    clientIdPrefix: c.env.GOOGLE_CLIENT_ID ? c.env.GOOGLE_CLIENT_ID.slice(0, 12) : null,
+    secretPrefix: c.env.GOOGLE_CLIENT_SECRET ? c.env.GOOGLE_CLIENT_SECRET.slice(0, 6) : null,
+    secretLength: c.env.GOOGLE_CLIENT_SECRET?.length ?? 0,
+    hasResendKey: !!c.env.RESEND_API_KEY,
+    betterAuthUrl: c.env.BETTER_AUTH_URL,
+  });
 });
 
 // 7. Session Middleware on API routes

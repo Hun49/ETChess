@@ -5,19 +5,86 @@ import {
   Flame,
   Globe,
   Monitor,
+  Shield,
   Sparkles,
+  Swords,
   UserCheck,
   Zap,
 } from "lucide-react";
 import type React from "react";
+import { useEffect, useState } from "react";
+import { api, useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
 
+interface HomeRecentGame {
+  id: string;
+  whitePlayerId: string | null;
+  blackPlayerId: string | null;
+  whitePlayer?: { name: string } | null;
+  blackPlayer?: { name: string } | null;
+  result: string | null;
+  category?: string | null;
+  timeControl: string;
+}
+
 export const HomeView: React.FC = () => {
-  const { setActiveView } = useGameStore();
+  const { setActiveView, openModal, isGuest, guestSkillLevel } = useGameStore();
+  const { data: session } = useSession();
+
+  const [recentGames, setRecentGames] = useState<HomeRecentGame[]>([]);
+  const [ratings, setRatings] = useState<{ bullet: number; blitz: number; rapid: number } | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setRecentGames([]);
+      setRatings(null);
+      return;
+    }
+
+    let isMounted = true;
+    setLoading(true);
+
+    const loadData = async () => {
+      try {
+        // Fetch recent games for current user
+        const gamesRes = await api.api.games.$get({
+          query: { userId: session.user.id, limit: "5" },
+        });
+        if (gamesRes.ok) {
+          const gamesData = await gamesRes.json();
+          if (isMounted && gamesData?.games) {
+            setRecentGames(gamesData.games);
+          }
+        }
+
+        // Fetch user ratings
+        const userRes = await api.api.users.me.$get();
+        if (userRes.ok) {
+          const userData = await userRes.json();
+          if (isMounted && userData?.user?.ratings) {
+            setRatings(userData.user.ratings);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch home lobby stats:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.user?.id]);
 
   return (
     <div className="space-y-6 pb-12">
-      {/* 1. Hero Card matching Screen 1 in mockup */}
+      {/* 1. Clean Hero Card */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0a181c] via-[#0d2227] to-[#081518] border border-[#162e33] p-6 md:p-10 shadow-xl">
         <div className="relative z-10 max-w-xl space-y-4">
           <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white leading-tight">
@@ -37,24 +104,9 @@ export const HomeView: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* 3D Chess Knight visual element */}
-        <div className="absolute right-4 md:right-12 bottom-0 top-0 flex items-center pointer-events-none opacity-30 md:opacity-80">
-          <div className="w-48 h-48 md:w-64 md:h-64 relative flex items-center justify-center">
-            <svg
-              className="w-full h-full text-[#143238] drop-shadow-[0_10px_30px_rgba(0,230,153,0.15)]"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <title>Chess Knight Banner</title>
-              <path d="M19 22H5v-2h14v2zm-2.5-4H7.5l.5-4h8l.5 4zm-4.5-6h-2V7h2v5zm4-6H8V4h8v2z" />
-            </svg>
-          </div>
-        </div>
       </div>
 
-      {/* 2. 4 Play Mode Cards matching mockup */}
+      {/* 2. 4 Play Mode Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Play Online */}
         <button
@@ -72,14 +124,22 @@ export const HomeView: React.FC = () => {
             <div className="text-sm font-bold text-white group-hover:text-[#00e699] transition-colors">
               Play Online
             </div>
-            <div className="text-xs text-[#8ba3a8] mt-0.5">Find an opponent</div>
+            <div className="text-xs text-[#8ba3a8] mt-0.5">
+              {isGuest ? `Match guests (${guestSkillLevel})` : "Find an opponent"}
+            </div>
           </div>
         </button>
 
         {/* Play a Friend */}
         <button
           type="button"
-          onClick={() => setActiveView("play_friend")}
+          onClick={() => {
+            if (isGuest) {
+              setActiveView("play_friend");
+            } else {
+              setActiveView("play_friend");
+            }
+          }}
           className="group flex flex-col justify-between rounded-2xl border border-[#14282c] bg-[#0b171a] p-5 text-left hover:border-[#00e699]/40 hover:bg-[#0e2024] transition-all cursor-pointer"
         >
           <div className="flex items-center justify-between">
@@ -89,8 +149,15 @@ export const HomeView: React.FC = () => {
             <ArrowRight className="h-4 w-4 text-[#4a6469] group-hover:text-[#00e699] group-hover:translate-x-0.5 transition-all" />
           </div>
           <div className="mt-4">
-            <div className="text-sm font-bold text-white group-hover:text-[#00e699] transition-colors">
-              Play a Friend
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-bold text-white group-hover:text-[#00e699] transition-colors">
+                Play a Friend
+              </span>
+              {isGuest && (
+                <span className="rounded bg-amber-500/10 text-[9px] font-bold text-amber-400 px-1 py-0.5 border border-amber-500/20">
+                  Account Req.
+                </span>
+              )}
             </div>
             <div className="text-xs text-[#8ba3a8] mt-0.5">Challenge your friends</div>
           </div>
@@ -132,7 +199,7 @@ export const HomeView: React.FC = () => {
             <div className="text-sm font-bold text-white group-hover:text-[#00e699] transition-colors">
               Local Play
             </div>
-            <div className="text-xs text-[#8ba3a8] mt-0.5">Same device</div>
+            <div className="text-xs text-[#8ba3a8] mt-0.5">Same device pass & play</div>
           </div>
         </button>
       </div>
@@ -143,131 +210,170 @@ export const HomeView: React.FC = () => {
         <div className="lg:col-span-7 rounded-2xl border border-[#14282c] bg-[#0b171a] p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-bold text-white">Recent Games</h2>
-            <button
-              type="button"
-              onClick={() => setActiveView("history")}
-              className="text-xs font-semibold text-[#00e699] hover:underline"
-            >
-              View All
-            </button>
+            {recentGames.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveView("history")}
+                className="text-xs font-semibold text-[#00e699] hover:underline cursor-pointer"
+              >
+                View All
+              </button>
+            )}
           </div>
 
-          <div className="space-y-2.5">
-            {/* Game 1 */}
-            <div className="flex items-center justify-between rounded-xl bg-[#0e1e22] px-3.5 py-2.5 border border-[#14282c]/80 hover:bg-[#12262b] transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#16343b] text-white font-bold text-xs">
-                  A
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">You vs AlexRook</div>
-                  <div className="text-[10px] text-[#8ba3a8]">Blitz • 3+2</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="rounded-md bg-[#00e699]/15 px-2 py-0.5 text-[11px] font-bold text-[#00e699] border border-[#00e699]/30">
-                  Win +17
-                </span>
-                <span className="text-[10px] text-[#587277]">2 hours ago</span>
-              </div>
-            </div>
+          {recentGames.length > 0 ? (
+            <div className="space-y-2.5">
+              {recentGames.map((game) => {
+                const isWhite = game.whitePlayerId === session?.user?.id;
+                const opponentName = isWhite
+                  ? game.blackPlayer?.name || "Anonymous Opponent"
+                  : game.whitePlayer?.name || "Anonymous Opponent";
+                const isWinner =
+                  (game.result === "1-0" && isWhite) || (game.result === "0-1" && !isWhite);
+                const isDraw = game.result === "1/2-1/2";
 
-            {/* Game 2 */}
-            <div className="flex items-center justify-between rounded-xl bg-[#0e1e22] px-3.5 py-2.5 border border-[#14282c]/80 hover:bg-[#12262b] transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#261f2f] text-purple-300 font-bold text-xs">
-                  S
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">ShadowKnight vs You</div>
-                  <div className="text-[10px] text-[#8ba3a8]">Rapid • 10+0</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="rounded-md bg-red-500/15 px-2 py-0.5 text-[11px] font-bold text-red-400 border border-red-500/30">
-                  Loss -12
-                </span>
-                <span className="text-[10px] text-[#587277]">5 hours ago</span>
-              </div>
+                return (
+                  <div
+                    key={game.id}
+                    className="flex items-center justify-between rounded-xl bg-[#0e1e22] px-3.5 py-2.5 border border-[#14282c]/80 hover:bg-[#12262b] transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#16343b] text-white font-bold text-xs uppercase">
+                        {opponentName.charAt(0)}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white">You vs {opponentName}</div>
+                        <div className="text-[10px] text-[#8ba3a8] capitalize">
+                          {game.category || "Standard"} • {game.timeControl}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`rounded-md px-2 py-0.5 text-[11px] font-bold border ${
+                          isWinner
+                            ? "bg-[#00e699]/15 text-[#00e699] border-[#00e699]/30"
+                            : isDraw
+                              ? "bg-neutral-800 text-neutral-300 border-neutral-700"
+                              : "bg-red-500/15 text-red-400 border-red-500/30"
+                        }`}
+                      >
+                        {isWinner ? "Win" : isDraw ? "Draw" : "Loss"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-
-            {/* Game 3 */}
-            <div className="flex items-center justify-between rounded-xl bg-[#0e1e22] px-3.5 py-2.5 border border-[#14282c]/80 hover:bg-[#12262b] transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#1f2832] text-blue-300 font-bold text-xs">
-                  Q
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">You vs QueenBishop</div>
-                  <div className="text-[10px] text-[#8ba3a8]">Blitz • 3+2</div>
-                </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-10 text-center px-4 rounded-xl bg-[#0e1e22]/50 border border-dashed border-[#14282c]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#14282c] text-[#8ba3a8] mb-3">
+                <Swords className="h-5 w-5" />
               </div>
-              <div className="flex items-center gap-3">
-                <span className="rounded-md bg-neutral-800 px-2 py-0.5 text-[11px] font-bold text-neutral-300 border border-neutral-700">
-                  Draw 0
-                </span>
-                <span className="text-[10px] text-[#587277]">1 day ago</span>
-              </div>
+              <p className="text-xs font-bold text-white">No games played yet</p>
+              <p className="text-[11px] text-[#587277] max-w-xs mt-1">
+                {isGuest
+                  ? "Guest sessions play unrated casual games. Start a match or create an account to save match history!"
+                  : "Your database match history is clean. Play your first match to record stats!"}
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveView("play_online")}
+                className="mt-3.5 inline-flex items-center gap-1.5 rounded-lg bg-[#00e699]/10 hover:bg-[#00e699]/20 border border-[#00e699]/30 text-[#00e699] px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer"
+              >
+                <span>Play a Game</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Your Ratings */}
         <div className="lg:col-span-5 rounded-2xl border border-[#14282c] bg-[#0b171a] p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-bold text-white">Your Ratings</h2>
-            <button
-              type="button"
-              onClick={() => setActiveView("profile")}
-              className="text-xs font-semibold text-[#00e699] hover:underline"
-            >
-              View All
-            </button>
+            {!isGuest && (
+              <button
+                type="button"
+                onClick={() => setActiveView("profile")}
+                className="text-xs font-semibold text-[#00e699] hover:underline cursor-pointer"
+              >
+                View Profile
+              </button>
+            )}
           </div>
 
-          <div className="space-y-3">
-            {/* Bullet */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-[#0e1e22] border border-[#14282c]/80">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
-                  <Flame className="h-4 w-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Bullet</div>
-                  <div className="text-[10px] text-[#8ba3a8]">1420</div>
-                </div>
+          {isGuest ? (
+            <div className="p-4 rounded-xl bg-[#0e1e22] border border-[#14282c] space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white">Guest Session</span>
+                <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-400 capitalize">
+                  {guestSkillLevel} Tier
+                </span>
               </div>
-              <span className="text-xs font-bold text-[#00e699]">+12</span>
+              <p className="text-[11px] text-[#8ba3a8] leading-relaxed">
+                Guest accounts play unrated casual matches. Create a free account to track your ELO
+                rating across Bullet, Blitz, and Rapid!
+              </p>
+              <button
+                type="button"
+                onClick={() => openModal("auth")}
+                className="w-full py-2.5 rounded-xl bg-[#00e699] text-[#081214] font-bold text-xs hover:bg-[#00c885] transition-colors cursor-pointer shadow-md shadow-[#00e699]/10"
+              >
+                Sign Up to Get Rated
+              </button>
             </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Bullet */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-[#0e1e22] border border-[#14282c]/80">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
+                    <Flame className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">Bullet</div>
+                    <div className="text-[10px] text-[#8ba3a8] font-mono">
+                      {ratings?.bullet ?? 1000}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-[#00e699]">Active</span>
+              </div>
 
-            {/* Blitz */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-[#0e1e22] border border-[#14282c]/80">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#00e699]/10 text-[#00e699]">
-                  <Zap className="h-4 w-4" />
+              {/* Blitz */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-[#0e1e22] border border-[#14282c]/80">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#00e699]/10 text-[#00e699]">
+                    <Zap className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">Blitz</div>
+                    <div className="text-[10px] text-[#8ba3a8] font-mono">
+                      {ratings?.blitz ?? 1000}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Blitz</div>
-                  <div className="text-[10px] text-[#8ba3a8]">1567</div>
-                </div>
+                <span className="text-xs font-bold text-[#00e699]">Active</span>
               </div>
-              <span className="text-xs font-bold text-[#00e699]">+17</span>
-            </div>
 
-            {/* Rapid */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-[#0e1e22] border border-[#14282c]/80">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400">
-                  <Clock className="h-4 w-4" />
+              {/* Rapid */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-[#0e1e22] border border-[#14282c]/80">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400">
+                    <Clock className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">Rapid</div>
+                    <div className="text-[10px] text-[#8ba3a8] font-mono">
+                      {ratings?.rapid ?? 1000}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Rapid</div>
-                  <div className="text-[10px] text-[#8ba3a8]">1321</div>
-                </div>
+                <span className="text-xs font-bold text-[#00e699]">Active</span>
               </div>
-              <span className="text-xs font-bold text-red-400">-5</span>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

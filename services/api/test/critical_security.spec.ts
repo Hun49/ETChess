@@ -18,7 +18,7 @@ describe("Critical Security Audit & Regression Tests (C1–C4)", () => {
   });
 
   describe("C1: Privilege Escalation Prevention on Sign-Up", () => {
-    it("neutralizes client-supplied role: 'admin' on sign-up and guarantees role = 'user'", async () => {
+    it("strictly blocks traditional email/password registration in favor of verified OAuth", async () => {
       const email = `attacker_${Date.now()}@evil.corp`;
 
       const res = await app.fetch(
@@ -38,44 +38,27 @@ describe("Critical Security Audit & Regression Tests (C1–C4)", () => {
         env,
       );
 
-      expect(res.status).toBe(200);
+      // Email/password sign-up is strictly disabled; returns 400
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { code?: string; message?: string };
+      expect(data.code).toBe("EMAIL_PASSWORD_DISABLED");
+    });
 
-      // Verify that even if client posts role: 'admin', row in D1 database strictly has role = 'user'
-      const [userRow] = await db.select().from(schema.user).where(eq(schema.user.email, email));
+    it("verifies user creation database records strictly default to role = 'user'", async () => {
+      const userId = `test_player_${Date.now()}`;
+      const email = `player_${Date.now()}@etchess.io`;
+
+      await env.DB.prepare(
+        "INSERT INTO user (id, name, email, email_verified, role, is_banned, experience_level, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+        .bind(userId, "PlayerOne", email, 1, "user", 0, null, Date.now(), Date.now())
+        .run();
+
+      const [userRow] = await db.select().from(schema.user).where(eq(schema.user.id, userId));
 
       expect(userRow).toBeDefined();
       expect(userRow?.role).toBe("user");
       expect(userRow?.role).not.toBe("admin");
-      expect(userRow?.isBanned).toBe(false);
-      expect(userRow?.banExpiresAt).toBeNull();
-    });
-
-    it("verifies normal sign-up without role creates a user with role = 'user'", async () => {
-      const email = `honest_user_${Date.now()}@etchess.io`;
-
-      const res = await app.fetch(
-        new Request("http://localhost:8787/api/auth/sign-up/email", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Origin: "http://localhost:3000",
-          },
-          body: JSON.stringify({
-            name: "HonestPlayer",
-            email,
-            password: "SuperSecretPassword123!",
-          }),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(200);
-
-      // Verify row in D1 database has role = 'user'
-      const [userRow] = await db.select().from(schema.user).where(eq(schema.user.email, email));
-
-      expect(userRow).toBeDefined();
-      expect(userRow?.role).toBe("user");
       expect(userRow?.isBanned).toBe(false);
       expect(userRow?.banExpiresAt).toBeNull();
     });

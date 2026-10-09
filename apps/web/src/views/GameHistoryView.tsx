@@ -16,7 +16,8 @@ import {
   Zap,
 } from "lucide-react";
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api, useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
 
 interface HistoricalGame {
@@ -39,107 +40,92 @@ interface HistoricalGame {
   category: "online" | "friend" | "computer";
 }
 
-const MOCK_HISTORY: HistoricalGame[] = [
-  {
-    id: "g1",
-    type: "blitz",
-    timeControl: "3+2",
-    opponent: { name: "GrandmasterBot", rating: 1850 },
-    playerColor: "white",
-    result: "win",
-    ratingDelta: +18,
-    termination: "by Checkmate",
-    opening: "Ruy Lopez: Morphy Defense",
-    movesCount: 28,
-    duration: "4m 12s",
-    date: "10 minutes ago",
-    category: "computer",
-  },
-  {
-    id: "g2",
-    type: "rapid",
-    timeControl: "10+0",
-    opponent: { name: "Elena_V", rating: 1580 },
-    playerColor: "black",
-    result: "win",
-    ratingDelta: +14,
-    termination: "by Resignation",
-    opening: "Sicilian Defense: Najdorf",
-    movesCount: 36,
-    duration: "14m 20s",
-    date: "2 hours ago",
-    category: "online",
-  },
-  {
-    id: "g3",
-    type: "blitz",
-    timeControl: "5+0",
-    opponent: { name: "ViktorChess", rating: 1620 },
-    playerColor: "white",
-    result: "loss",
-    ratingDelta: -12,
-    termination: "by Timeout",
-    opening: "Queen's Gambit Declined",
-    movesCount: 42,
-    duration: "9m 50s",
-    date: "Yesterday",
-    category: "online",
-  },
-  {
-    id: "g4",
-    type: "bullet",
-    timeControl: "1+0",
-    opponent: { name: "FlashTactics", rating: 1490 },
-    playerColor: "black",
-    result: "win",
-    ratingDelta: +16,
-    termination: "by Checkmate",
-    opening: "King's Indian Attack",
-    movesCount: 22,
-    duration: "1m 45s",
-    date: "Yesterday",
-    category: "online",
-  },
-  {
-    id: "g5",
-    type: "rapid",
-    timeControl: "10+5",
-    opponent: { name: "David_Friend", rating: 1530 },
-    playerColor: "white",
-    result: "draw",
-    ratingDelta: 0,
-    termination: "by Repetition",
-    opening: "Caro-Kann: Classical Variation",
-    movesCount: 48,
-    duration: "18m 10s",
-    date: "3 days ago",
-    category: "friend",
-  },
-  {
-    id: "g6",
-    type: "blitz",
-    timeControl: "3+0",
-    opponent: { name: "DarkKnight99", rating: 1555 },
-    playerColor: "black",
-    result: "loss",
-    ratingDelta: -11,
-    termination: "by Checkmate",
-    opening: "French Defense: Winawer",
-    movesCount: 31,
-    duration: "5m 12s",
-    date: "4 days ago",
-    category: "online",
-  },
-];
+interface ApiGameItem {
+  id: string;
+  whitePlayerId: string | null;
+  blackPlayerId: string | null;
+  whitePlayer?: { name: string } | null;
+  blackPlayer?: { name: string } | null;
+  result: string | null;
+  category?: string | null;
+  timeControl: string;
+  terminationReason?: string | null;
+  moves?: unknown;
+  startedAt?: string | null;
+}
 
 export const GameHistoryView: React.FC = () => {
-  const { setActiveView } = useGameStore();
+  const { setActiveView, isGuest } = useGameStore();
+  const { data: session } = useSession();
   const [filter, setFilter] = useState<"all" | "online" | "friend" | "computer">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [games, setGames] = useState<HistoricalGame[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setGames([]);
+      return;
+    }
+
+    let isMounted = true;
+    setLoading(true);
+
+    const loadGames = async () => {
+      try {
+        const res = await api.api.games.$get({
+          query: { userId: session.user.id, limit: "50" },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data?.games) {
+            const mapped: HistoricalGame[] = (data.games as unknown as ApiGameItem[]).map((g) => {
+              const isWhite = g.whitePlayerId === session.user.id;
+              const oppName = isWhite
+                ? g.blackPlayer?.name || "Opponent"
+                : g.whitePlayer?.name || "Opponent";
+              const isWin = (g.result === "1-0" && isWhite) || (g.result === "0-1" && !isWhite);
+              const isDraw = g.result === "1/2-1/2";
+              const result = isWin ? "win" : isDraw ? "draw" : "loss";
+              const gameType: HistoricalGame["type"] =
+                g.category === "bullet" || g.category === "rapid" ? g.category : "blitz";
+
+              return {
+                id: g.id,
+                type: gameType,
+                timeControl: g.timeControl || "3+2",
+                opponent: { name: oppName, rating: 1000 },
+                playerColor: isWhite ? "white" : "black",
+                result,
+                ratingDelta: 0,
+                termination: g.terminationReason ? `by ${g.terminationReason}` : "Completed",
+                opening: "Standard Chess",
+                movesCount: Array.isArray(g.moves) ? g.moves.length : 0,
+                duration: "Active",
+                date: g.startedAt ? new Date(g.startedAt).toLocaleDateString() : "Recent",
+                category: "online",
+              };
+            });
+            setGames(mapped);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load match history:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadGames();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.user?.id]);
 
   const filteredGames = useMemo(() => {
-    return MOCK_HISTORY.filter((game) => {
+    return games.filter((game) => {
       if (filter !== "all" && game.category !== filter) return false;
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
@@ -151,11 +137,15 @@ export const GameHistoryView: React.FC = () => {
       }
       return true;
     });
-  }, [filter, searchQuery]);
+  }, [games, filter, searchQuery]);
+
+  const winCount = games.filter((g) => g.result === "win").length;
+  const lossCount = games.filter((g) => g.result === "loss").length;
+  const drawCount = games.filter((g) => g.result === "draw").length;
 
   const handleCopyPgn = (gameId: string) => {
     navigator.clipboard.writeText(
-      `[Event "ET Chess Online Game"]\n[Site "ET Chess"]\n[Result "1-0"]\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7`,
+      `[Event "ET Chess Match"]\n[Site "ET Chess"]\n[Result "*"]\n1. e4 e5 2. Nf3 Nc6`,
     );
     setCopiedId(gameId);
     setTimeout(() => setCopiedId(null), 2000);
@@ -185,11 +175,11 @@ export const GameHistoryView: React.FC = () => {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 rounded-xl border border-[#14282c] bg-[#0b171a] px-3 py-1.5 text-xs text-[#8ba3a8]">
               <Trophy className="h-3.5 w-3.5 text-[#00e699]" />
-              <span className="font-bold text-white">4 Wins</span>
+              <span className="font-bold text-white">{winCount} Wins</span>
               <span className="text-[#5d7378]">•</span>
-              <span className="text-red-400 font-bold">2 Losses</span>
+              <span className="text-red-400 font-bold">{lossCount} Losses</span>
               <span className="text-[#5d7378]">•</span>
-              <span className="text-neutral-400 font-bold">1 Draw</span>
+              <span className="text-neutral-400 font-bold">{drawCount} Draws</span>
             </div>
           </div>
         </div>
