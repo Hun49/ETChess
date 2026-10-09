@@ -173,6 +173,8 @@ let clockIntervalId: number | null = null;
 
 const TC_CONFIG: Record<TimeControlKey, { initialMs: number; incMs: number }> = {
   "1+0": { initialMs: 60 * 1000, incMs: 0 },
+  "1+1": { initialMs: 60 * 1000, incMs: 1000 },
+  "2+1": { initialMs: 120 * 1000, incMs: 1000 },
   "2+0": { initialMs: 120 * 1000, incMs: 0 },
   "3+0": { initialMs: 3 * 60 * 1000, incMs: 0 },
   "3+2": { initialMs: 3 * 60 * 1000, incMs: 2000 },
@@ -483,7 +485,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   leaveMatchmaking: () => {
     if (activeMatchmakerWs) {
-      const leaveMsg: ClientMatchmakerFrame = { type: "LEAVE_QUEUE" };
+      const leaveMsg: ClientMatchmakerFrame = { type: "QUEUE_LEAVE", payload: {} };
       try {
         activeMatchmakerWs.send(JSON.stringify(leaveMsg));
       } catch {}
@@ -619,7 +621,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   offerDraw: () => {
     const { mode, playerColor } = get();
     if (mode === "online" && activeGameWs) {
-      const frame: ClientGameFrame = { type: "OFFER_DRAW" };
+      const frame: ClientGameFrame = { type: "DRAW_OFFER", payload: {} };
       activeGameWs.send(JSON.stringify(frame));
       set({ drawOfferedBy: playerColor });
     }
@@ -628,7 +630,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   respondDraw: (accept: boolean) => {
     const { mode } = get();
     if (mode === "online" && activeGameWs) {
-      const frame: ClientGameFrame = { type: "RESPOND_DRAW", accept };
+      const frame: ClientGameFrame = { type: "DRAW_RESPONSE", payload: { accept } };
       activeGameWs.send(JSON.stringify(frame));
       set({ drawOfferedBy: null });
     }
@@ -852,7 +854,7 @@ function connectToOnlineGame(
         isCheck: isInCheck(payload.fen),
         isClockRunning: payload.status === "active",
       });
-    } else if (frame.type === "MOVE_MADE") {
+    } else if (frame.type === "MOVE_ACCEPTED") {
       const payload = frame.payload;
       const isCapture = payload.san.includes("x");
       if (isCapture) {
@@ -874,7 +876,7 @@ function connectToOnlineGame(
         lastMoveTimestamp: payload.lastMoveTimestamp,
         isCheck: check,
       });
-    } else if (frame.type === "GAME_ENDED") {
+    } else if (frame.type === "GAME_TERMINATED") {
       sound.playGameOver();
       set({
         activeView: "game_over",

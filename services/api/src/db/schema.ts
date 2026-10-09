@@ -200,6 +200,27 @@ export const challenges = sqliteTable(
   (table) => [index("challenges_status_expires_idx").on(table.status, table.expiresAt)],
 );
 
+export const ratingHistory = sqliteTable(
+  "rating_history",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    gameId: text("game_id")
+      .notNull()
+      .references(() => games.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    ratingBefore: real("rating_before").notNull(),
+    ratingAfter: real("rating_after").notNull(),
+    ratingChange: real("rating_change").notNull(),
+    rdBefore: real("rd_before"),
+    rdAfter: real("rd_after"),
+    recordedAt: integer("recorded_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("rating_history_user_idx").on(table.userId, table.recordedAt)],
+);
+
 export type User = typeof user.$inferSelect;
 export type InsertUser = typeof user.$inferInsert;
 export type Session = typeof session.$inferSelect;
@@ -217,3 +238,5 @@ export type Friend = typeof friends.$inferSelect;
 export type InsertFriend = typeof friends.$inferInsert;
 export type Challenge = typeof challenges.$inferSelect;
 export type InsertChallenge = typeof challenges.$inferInsert;
+export type RatingHistory = typeof ratingHistory.$inferSelect;
+export type InsertRatingHistory = typeof ratingHistory.$inferInsert;

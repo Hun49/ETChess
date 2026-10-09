@@ -355,6 +355,35 @@ export const usersRoute = new Hono<{
     });
   })
 
+  // Current active live game for authenticated user (for resume/rejoin)
+  .get("/me/live-game", requireAuth, async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      return c.json(
+        {
+          error: {
+            code: "UNAUTHENTICATED",
+            message: "Authentication required",
+          },
+        },
+        401,
+      );
+    }
+
+    if (c.env.USER_PRESENCE_DO) {
+      try {
+        const upStub = c.env.USER_PRESENCE_DO.get(c.env.USER_PRESENCE_DO.idFromName(user.id));
+        const res = await upStub.fetch("http://internal/active-game");
+        if (res.ok) {
+          const data = (await res.json()) as { active: boolean; gameId: string | null };
+          return c.json(data);
+        }
+      } catch {}
+    }
+
+    return c.json({ active: false, gameId: null });
+  })
+
   // Update authenticated user profile
   .patch(
     "/me",

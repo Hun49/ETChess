@@ -67,10 +67,14 @@ reportsRoute.post("/", requireAuth, zValidator("json", createReportSchema), asyn
     );
   }
 
-  // If gameId is supplied, verify game exists
+  // If gameId is supplied, verify game exists and involves both participants (B7-04)
   if (gameId) {
     const [game] = await db
-      .select({ id: schema.games.id })
+      .select({
+        id: schema.games.id,
+        whitePlayerId: schema.games.whitePlayerId,
+        blackPlayerId: schema.games.blackPlayerId,
+      })
       .from(schema.games)
       .where(eq(schema.games.id, gameId));
 
@@ -83,6 +87,21 @@ reportsRoute.post("/", requireAuth, zValidator("json", createReportSchema), asyn
           },
         },
         404,
+      );
+    }
+
+    const isReporterParticipant = game.whitePlayerId === user.id || game.blackPlayerId === user.id;
+    const isReportedParticipant =
+      game.whitePlayerId === reportedId || game.blackPlayerId === reportedId;
+    if (!isReporterParticipant || !isReportedParticipant) {
+      return c.json(
+        {
+          error: {
+            code: "FORBIDDEN",
+            message: "Referenced game must involve both the reporter and the reported user",
+          },
+        },
+        403,
       );
     }
   }

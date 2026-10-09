@@ -28,7 +28,8 @@ challengesRoute.use("*", requireAuth);
 
 const CreateChallengeSchema = z.object({
   challengedId: z.string().optional(),
-  timeControlId: z.string().default("3+2"),
+  timeControlId: z.string().optional(),
+  timeControl: z.string().optional(),
   rated: z.boolean().optional(),
   isRated: z.boolean().optional(),
   preferredColor: z.enum(["random", "white", "black"]).default("random"),
@@ -45,7 +46,19 @@ challengesRoute.post("/", zValidator("json", CreateChallengeSchema), async (c) =
   }
 
   const body = c.req.valid("json");
-  const timeControlId = (body.timeControlId || "3+2") as TimeControlKey;
+  const rawTc = body.timeControlId || body.timeControl;
+  if (!rawTc || !(rawTc in TIME_CONTROLS)) {
+    return c.json(
+      {
+        error: {
+          code: "INVALID_TIME_CONTROL",
+          message: `Invalid or unsupported time control preset: ${rawTc}`,
+        },
+      },
+      400,
+    );
+  }
+  const timeControlId = rawTc as TimeControlKey;
   const isRated = body.rated ?? body.isRated ?? false;
   const preferredColor = body.preferredColor || "random";
   const challengedId = body.challengedId || null;
@@ -71,28 +84,42 @@ challengesRoute.post("/", zValidator("json", CreateChallengeSchema), async (c) =
     );
   }
 
-  // 1d. Prevent creating challenge while in an active live game (H10)
-  if (c.env.MATCHMAKER_DO) {
+  // 1d. Prevent creating challenge while in an active live game (H10, INV-01)
+  let creatorInGame: { active: boolean; gameId: string | null } | null = null;
+  if (c.env.USER_PRESENCE_DO) {
+    try {
+      const upStub = c.env.USER_PRESENCE_DO.get(c.env.USER_PRESENCE_DO.idFromName(user.id));
+      const checkRes = await upStub.fetch("http://internal/active-game");
+      if (checkRes.ok) {
+        const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
+        if (checkData.active) creatorInGame = checkData;
+      }
+    } catch {
+      // Best-effort check
+    }
+  }
+  if (!creatorInGame && c.env.MATCHMAKER_DO) {
     try {
       const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
       const checkRes = await mmStub.fetch(`http://internal/user-active-game/${user.id}`);
       if (checkRes.ok) {
         const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
-        if (checkData.active) {
-          return c.json(
-            {
-              error: {
-                code: "ALREADY_IN_GAME",
-                message: `You are already playing game ${checkData.gameId}. Finish or resign before creating a challenge.`,
-              },
-            },
-            409,
-          );
-        }
+        if (checkData.active) creatorInGame = checkData;
       }
     } catch {
       // Best-effort check
     }
+  }
+  if (creatorInGame) {
+    return c.json(
+      {
+        error: {
+          code: "ALREADY_IN_GAME",
+          message: `You are already playing game ${creatorInGame.gameId}. Finish or resign before creating a challenge.`,
+        },
+      },
+      409,
+    );
   }
 
   const db = drizzle(c.env.DB, { schema });
@@ -405,32 +432,61 @@ challengesRoute.post("/:id/accept", async (c) => {
     );
   }
 
-  // 2b. Prevent accepting challenge while in an active live game (H10)
-  if (c.env.MATCHMAKER_DO) {
+  // 2b. Prevent accepting challenge while in an active live game (H10, INV-01)
+  let selfInGame: { active: boolean; gameId: string | null } | null = null;
+  if (c.env.USER_PRESENCE_DO) {
     try {
-      const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
-      const checkRes = await mmStub.fetch(`http://internal/user-active-game/${user.id}`);
-      if (checkRes.ok) {
-        const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
-        if (checkData.active) {
-          return c.json(
-            {
-              error: {
-                code: "ALREADY_IN_GAME",
-                message: `You are already playing game ${checkData.gameId}. Finish or resign before accepting a challenge.`,
-              },
-            },
-            409,
-          );
-        }
+      const upSelf = c.env.USER_PRESENCE_DO.get(c.env.USER_PRESENCE_DO.idFromName(user.id));
+      const selfRes = await upSelf.fetch("http://internal/active-game");
+      if (selfRes.ok) {
+        const d = (await selfRes.json()) as { active: boolean; gameId: string | null };
+        if (d.active) selfInGame = d;
       }
     } catch {
       // Best-effort check
     }
   }
+  if (!selfInGame && c.env.MATCHMAKER_DO) {
+    try {
+      const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
+      const checkRes = await mmStub.fetch(`http://internal/user-active-game/${user.id}`);
+      if (checkRes.ok) {
+        const d = (await checkRes.json()) as { active: boolean; gameId: string | null };
+        if (d.active) selfInGame = d;
+      }
+    } catch {
+      // Best-effort check
+    }
+  }
+  if (selfInGame) {
+    return c.json(
+      {
+        error: {
+          code: "ALREADY_IN_GAME",
+          message: `You are already playing game ${selfInGame.gameId}. Finish or resign before accepting a challenge.`,
+        },
+      },
+      409,
+    );
+  }
 
   // 2c. Prevent accepting if challenger is currently in an active live game
-  if (c.env.MATCHMAKER_DO) {
+  let challengerInGame = false;
+  if (c.env.USER_PRESENCE_DO) {
+    try {
+      const upChallenger = c.env.USER_PRESENCE_DO.get(
+        c.env.USER_PRESENCE_DO.idFromName(challenge.challengerId),
+      );
+      const oppRes = await upChallenger.fetch("http://internal/active-game");
+      if (oppRes.ok) {
+        const d = (await oppRes.json()) as { active: boolean; gameId: string | null };
+        if (d.active) challengerInGame = true;
+      }
+    } catch {
+      // Best-effort check
+    }
+  }
+  if (!challengerInGame && c.env.MATCHMAKER_DO) {
     try {
       const mmStub = c.env.MATCHMAKER_DO.get(c.env.MATCHMAKER_DO.idFromName("global"));
       const checkRes = await mmStub.fetch(
@@ -438,21 +494,22 @@ challengesRoute.post("/:id/accept", async (c) => {
       );
       if (checkRes.ok) {
         const checkData = (await checkRes.json()) as { active: boolean; gameId: string | null };
-        if (checkData.active) {
-          return c.json(
-            {
-              error: {
-                code: "OPPONENT_IN_GAME",
-                message: "The challenger is currently in another live game.",
-              },
-            },
-            409,
-          );
-        }
+        if (checkData.active) challengerInGame = true;
       }
     } catch {
       // Best-effort check
     }
+  }
+  if (challengerInGame) {
+    return c.json(
+      {
+        error: {
+          code: "OPPONENT_IN_GAME",
+          message: "The challenger is currently in another live game.",
+        },
+      },
+      409,
+    );
   }
 
   // 4. Resolve player details and ratings
@@ -547,6 +604,28 @@ challengesRoute.post("/:id/accept", async (c) => {
     });
   } catch (err) {
     console.error("Failed to pre-initialize GameSessionDO for challenge:", err);
+  }
+
+  // Register active game lock in UserPresenceDO for both players (B4-PRES-02, INV-01)
+  if (c.env.USER_PRESENCE_DO) {
+    try {
+      const upWhite = c.env.USER_PRESENCE_DO.get(c.env.USER_PRESENCE_DO.idFromName(whiteUserId));
+      const upBlack = c.env.USER_PRESENCE_DO.get(c.env.USER_PRESENCE_DO.idFromName(blackUserId));
+      await Promise.all([
+        upWhite.fetch("http://internal/claim-live-game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gameId }),
+        }),
+        upBlack.fetch("http://internal/claim-live-game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gameId }),
+        }),
+      ]);
+    } catch {
+      // Best-effort
+    }
   }
 
   // Register active game lock in MatchmakerDO for both players (H10 / RATE-11)

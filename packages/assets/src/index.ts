@@ -1,1 +1,2 @@
-export * from "./pieces.js";
+export * from "./pieces";
+export * from "./boardThemes";

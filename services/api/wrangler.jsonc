@@ -29,6 +29,10 @@
       {
         "name": "MATCHMAKER_DO",
         "class_name": "MatchmakerDO"
+      },
+      {
+        "name": "USER_PRESENCE_DO",
+        "class_name": "UserPresenceDO"
       }
     ]
   },
@@ -37,7 +41,8 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "GameSessionDO",
-        "MatchmakerDO"
+        "MatchmakerDO",
+        "UserPresenceDO"
       ]
     }
   ],
@@ -52,16 +57,78 @@
   "env": {
     "staging": {
       "name": "etchess-api-staging",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "etchess-d1-staging",
+          "database_id": "00000000-0000-0000-0000-000000000001",
+          "migrations_dir": "drizzle"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "AVATARS_BUCKET",
+          "bucket_name": "etchess-avatars-staging"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "GAME_SESSION_DO",
+            "class_name": "GameSessionDO"
+          },
+          {
+            "name": "MATCHMAKER_DO",
+            "class_name": "MatchmakerDO"
+          },
+          {
+            "name": "USER_PRESENCE_DO",
+            "class_name": "UserPresenceDO"
+          }
+        ]
+      },
       "vars": {
         "ENVIRONMENT": "staging",
-        "BETTER_AUTH_URL": "https://staging-api.etchess.io"
+        "BETTER_AUTH_URL": "https://staging-api.etchess.io",
+        "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com"
       }
     },
     "production": {
       "name": "etchess-api-production",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "etchess-d1-production",
+          "database_id": "00000000-0000-0000-0000-000000000002",
+          "migrations_dir": "drizzle"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "AVATARS_BUCKET",
+          "bucket_name": "etchess-avatars-production"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "GAME_SESSION_DO",
+            "class_name": "GameSessionDO"
+          },
+          {
+            "name": "MATCHMAKER_DO",
+            "class_name": "MatchmakerDO"
+          },
+          {
+            "name": "USER_PRESENCE_DO",
+            "class_name": "UserPresenceDO"
+          }
+        ]
+      },
       "vars": {
         "ENVIRONMENT": "production",
-        "BETTER_AUTH_URL": "https://api.etchess.io"
+        "BETTER_AUTH_URL": "https://api.etchess.io",
+        "GOOGLE_CLIENT_ID": "471436113446-phn41bqcuuh2houq9mebb7hp0lhslvpf.apps.googleusercontent.com"
       }
     }
   }

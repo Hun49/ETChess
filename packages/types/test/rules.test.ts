@@ -80,15 +80,16 @@ describe("Time Control Classification Formula", () => {
     expect(classifyTimeControl(300, 3)).toBe("blitz"); // 300 + 120 = 420s
   });
 
-  it("classifies rapid correctly (480s <= duration < 1500s)", () => {
+  it("classifies rapid correctly (480s <= duration < 3600s, including 30+0 per SRS RATE-12)", () => {
     expect(classifyTimeControl(600, 0)).toBe("rapid"); // 600s
     expect(classifyTimeControl(600, 5)).toBe("rapid"); // 600 + 200 = 800s
     expect(classifyTimeControl(900, 10)).toBe("rapid"); // 900 + 400 = 1300s
+    expect(classifyTimeControl(1800, 0)).toBe("rapid"); // 1800s (30+0)
   });
 
-  it("classifies classical correctly (duration >= 1500s)", () => {
-    expect(classifyTimeControl(1800, 0)).toBe("classical"); // 1800s
+  it("classifies classical correctly (duration >= 3600s)", () => {
     expect(classifyTimeControl(3600, 30)).toBe("classical");
+    expect(classifyTimeControl(5400, 30)).toBe("classical");
   });
 
   it("ensures all preset TIME_CONTROLS match their classified category", () => {

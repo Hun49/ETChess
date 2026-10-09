@@ -70,17 +70,6 @@ export const ClientGameFrameSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("MOVE"),
-    requestId: z.string().optional(),
-    payload: z.object({
-      from: SquareSchema,
-      to: SquareSchema,
-      promotion: PromotionPieceSchema.optional(),
-      expectedPly: z.number().int().nonnegative().optional().default(0),
-    }),
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("DRAW_OFFER"),
     requestId: z.string().optional(),
     payload: ClientDrawOfferPayloadSchema.default({}),
@@ -90,17 +79,6 @@ export const ClientGameFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("DRAW_RESPONSE"),
     requestId: z.string().optional(),
     payload: ClientDrawResponsePayloadSchema,
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("OFFER_DRAW"),
-    payload: z.any().optional().default({}),
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("RESPOND_DRAW"),
-    accept: z.boolean().optional(),
-    payload: z.any().optional().default({}),
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -129,7 +107,31 @@ export const ClientGameFrameSchema = z.discriminatedUnion("type", [
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("PING"),
-    timestamp: z.number(),
+    timestamp: z.number().optional(),
+    pingId: z.string().optional(),
+  }),
+  z.object({
+    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+    type: z.literal("PONG"),
+    pingId: z.string().optional(),
+    timestamp: z.number().optional(),
+    payload: z
+      .object({
+        pingId: z.string().optional(),
+        timestamp: z.number().optional(),
+      })
+      .optional(),
+  }),
+  z.object({
+    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+    type: z.literal("HEARTBEAT_PONG"),
+    pingId: z.string().optional(),
+    payload: z
+      .object({
+        pingId: z.string().optional(),
+        clientSeq: z.number().optional(),
+      })
+      .optional(),
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -144,7 +146,12 @@ export const ClientGameFrameSchema = z.discriminatedUnion("type", [
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("CHAT_SEND"),
-    text: z.string(),
+    text: z.string().min(1).max(280),
+  }),
+  z.object({
+    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+    type: z.literal("CHAT_MUTE"),
+    muted: z.boolean().default(true),
   }),
 ]);
 
@@ -291,16 +298,6 @@ export const ServerGameFrameSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("MOVE_MADE"),
-    requestId: z.string().optional(),
-    serverTime: z
-      .number()
-      .optional()
-      .default(() => Date.now()),
-    payload: ServerMoveAcceptedPayloadSchema,
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("MOVE_REJECTED"),
     requestId: z.string().optional(),
     serverTime: z
@@ -383,16 +380,6 @@ export const ServerGameFrameSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("GAME_ENDED"),
-    requestId: z.string().optional(),
-    serverTime: z
-      .number()
-      .optional()
-      .default(() => Date.now()),
-    payload: ServerGameTerminatedPayloadSchema,
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("HEARTBEAT_PONG"),
     requestId: z.string().optional(),
     serverTime: z
@@ -405,6 +392,27 @@ export const ServerGameFrameSchema = z.discriminatedUnion("type", [
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("PONG"),
     timestamp: z.number(),
+    pingId: z.string().optional(),
+  }),
+  z.object({
+    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+    type: z.literal("PING"),
+    pingId: z.string().optional(),
+    serverTime: z
+      .number()
+      .optional()
+      .default(() => Date.now()),
+    payload: z.object({ pingId: z.string().optional() }).optional(),
+  }),
+  z.object({
+    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+    type: z.literal("HEARTBEAT_PING"),
+    pingId: z.string().optional(),
+    serverTime: z
+      .number()
+      .optional()
+      .default(() => Date.now()),
+    payload: z.object({ pingId: z.string().optional() }).optional(),
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -423,6 +431,15 @@ export const ServerGameFrameSchema = z.discriminatedUnion("type", [
     senderRole: z.enum(["white", "black", "spectator"]),
     text: z.string(),
     timestamp: z.number(),
+  }),
+  z.object({
+    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+    type: z.literal("CHAT_MUTE_ACK"),
+    serverTime: z
+      .number()
+      .optional()
+      .default(() => Date.now()),
+    muted: z.boolean(),
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),

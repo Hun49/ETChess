@@ -27,7 +27,11 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { MetricsCollector } from "../lib/observability";
-import { buildRatingUpdateSet, fetchUserCategoryRating } from "../lib/ratingStorage";
+import {
+  buildRatingUpdateSet,
+  fetchUserCategoryRating,
+  settleGameRatings,
+} from "../lib/ratingStorage";
 import { getWsTicketSecret } from "../lib/secrets";
 import { TicketReplayGuard, verifyWsTicket } from "../lib/wsTicket";
 import type { Env } from "../types";
@@ -63,6 +67,7 @@ export interface StoredGameSessionState {
   ply: number;
   gameId: string;
   fen: string;
+  initialFen?: string;
   pgn: string;
   turn: "w" | "b";
   status: "waiting" | "active" | "ended" | "aborted";
@@ -109,6 +114,8 @@ export interface StoredGameSessionState {
   endedAt?: number;
   finalized: boolean;
   persistedToD1?: boolean;
+  positionCounts?: Record<string, number>;
+  terminalBroadcasted?: boolean;
 }
 
 interface SocketAttachment {
@@ -122,12 +129,21 @@ interface SocketAttachment {
   measuredRttMs?: number;
   windowStartMs?: number;
   messageCountInWindow?: number;
+  pendingPings?: Record<string, number>;
+  // B5-CHAT-03: per-socket chat rate limiter (max 3 chat messages per 5 seconds)
+  chatCountInWindow?: number;
+  chatWindowStartMs?: number;
+  chatMuted?: boolean;
 }
 
 export class GameSessionDO extends DurableObject<Env> {
   private state: StoredGameSessionState | null = null;
   private timers: StoredTimer[] = [];
   private replayGuard: TicketReplayGuard;
+  private finalizationPromise: Promise<void> | null = null;
+  private userMessageWindows: Map<string, { windowStartMs: number; count: number }> = new Map();
+  private userChatWindows: Map<string, { windowStartMs: number; count: number }> = new Map();
+  private blockedUsers: Set<string> = new Set();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -185,6 +201,24 @@ export class GameSessionDO extends DurableObject<Env> {
     }
   }
 
+  public sendServerPing(ws: WebSocket): string {
+    const pingId = crypto.randomUUID();
+    const att = ws.deserializeAttachment() as SocketAttachment | null;
+    if (att) {
+      att.pendingPings = att.pendingPings || {};
+      att.pendingPings[pingId] = Date.now();
+      ws.serializeAttachment(att);
+    }
+    this.send(ws, {
+      v: PROTOCOL_VERSION,
+      type: "PING",
+      pingId,
+      serverTime: Date.now(),
+      payload: { pingId },
+    });
+    return pingId;
+  }
+
   private broadcast(frame: ServerGameFrame): void {
     const json = JSON.stringify(frame);
     for (const ws of this.ctx.getWebSockets()) {
@@ -192,6 +226,32 @@ export class GameSessionDO extends DurableObject<Env> {
         const att = ws.deserializeAttachment() as SocketAttachment | null;
         if (!att || !att.authenticated) {
           continue; // Critical C3: Never broadcast game traffic to unauthenticated sockets!
+        }
+        ws.send(json);
+      } catch {
+        // Socket dead
+      }
+    }
+  }
+
+  private broadcastChat(frame: ServerGameFrame, senderUserId?: string): void {
+    const json = JSON.stringify(frame);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        const att = ws.deserializeAttachment() as SocketAttachment | null;
+        if (!att || !att.authenticated) {
+          continue;
+        }
+        if (att.chatMuted) {
+          continue;
+        }
+        if (
+          senderUserId &&
+          att.userId &&
+          (this.blockedUsers.has(`${att.userId}:${senderUserId}`) ||
+            this.blockedUsers.has(`${senderUserId}:${att.userId}`))
+        ) {
+          continue;
         }
         ws.send(json);
       } catch {
@@ -268,7 +328,19 @@ export class GameSessionDO extends DurableObject<Env> {
         return Response.json({ success: true, alreadyInitialized: true });
       }
 
-      const tc = TIME_CONTROLS[body.timeControl] || TIME_CONTROLS["3+2"];
+      if (!body.timeControl || !(body.timeControl in TIME_CONTROLS)) {
+        return Response.json(
+          {
+            error: {
+              code: "INVALID_TIME_CONTROL",
+              message: `Invalid or unsupported time control preset: ${body.timeControl}`,
+            },
+          },
+          { status: 400 },
+        );
+      }
+
+      const tc = TIME_CONTROLS[body.timeControl as TimeControlKey];
       const now = Date.now();
       const initialMs = tc.initialSeconds * 1000;
       const incrementMs = tc.incrementSeconds * 1000;
@@ -282,6 +354,7 @@ export class GameSessionDO extends DurableObject<Env> {
         ply: initialPly,
         gameId: body.gameId,
         fen: initialFen,
+        initialFen: initialFen,
         pgn: "",
         turn: initialTurn,
         status: "active",
@@ -313,6 +386,7 @@ export class GameSessionDO extends DurableObject<Env> {
         lastMoveServerTime: now,
         isClockRunning: initialPly >= 2,
         moves: [],
+        positionCounts: { [initialFen.split(" ").slice(0, 4).join(" ")]: 1 },
         startedAt: now,
         finalized: false,
       };
@@ -426,6 +500,93 @@ export class GameSessionDO extends DurableObject<Env> {
       return Response.json({ success: true, expiredCount: this.timers.length });
     }
 
+    // 6b. Test Helper: Send Server Ping (for server-authoritative RTT testing)
+    if (url.pathname.endsWith("/send-ping") && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as { role?: "white" | "black" };
+      const role = body.role || "white";
+      let pingId: string | null = null;
+      for (const ws of this.ctx.getWebSockets()) {
+        const att = ws.deserializeAttachment() as SocketAttachment | null;
+        if (att?.authenticated && att.role === role) {
+          pingId = this.sendServerPing(ws);
+          break;
+        }
+      }
+      return Response.json({ success: true, pingId });
+    }
+
+    // 6c. Test Helper: Reconstruct DO from storage (simulates DO eviction / reload)
+    if (url.pathname.endsWith("/reconstruct") && request.method === "POST") {
+      this.state = null;
+      this.timers = [];
+      const state = await this.loadState();
+      return Response.json({ success: true, status: state?.status });
+    }
+
+    // 6d. Test Helper: Set FEN directly in DO state (for terminal testing)
+    if (url.pathname.endsWith("/test-set-fen") && request.method === "POST") {
+      const body = (await request.json()) as { fen: string; turn?: "w" | "b" };
+      const state = await this.loadState();
+      if (!state) return new Response("Not found", { status: 404 });
+      state.fen = body.fen;
+      if (body.turn) state.turn = body.turn;
+      await this.persistState();
+      return Response.json({ success: true, fen: state.fen });
+    }
+
+    // 6e. Test Helper: Set clock values directly in DO state (for timeout testing)
+    if (url.pathname.endsWith("/test-set-clock") && request.method === "POST") {
+      const body = (await request.json()) as { whiteMs?: number; blackMs?: number };
+      const state = await this.loadState();
+      if (!state) return new Response("Not found", { status: 404 });
+      if (body.whiteMs != null) state.whiteMs = body.whiteMs;
+      if (body.blackMs != null) state.blackMs = body.blackMs;
+      if (
+        (body.whiteMs === 0 && state.turn === "w") ||
+        (body.blackMs === 0 && state.turn === "b")
+      ) {
+        const now = Date.now();
+        for (const t of this.timers) {
+          if (t.kind === "CLOCK_FLAG" || t.kind === "FIRST_MOVE_DEADLINE") {
+            t.dueAt = now - 1;
+          }
+        }
+      }
+      await this.persistState();
+      return Response.json({ success: true, whiteMs: state.whiteMs, blackMs: state.blackMs });
+    }
+
+    // 6f. Test Helper: Set status/finalized directly in DO state (for reconciliation testing)
+    if (url.pathname.endsWith("/test-force-state") && request.method === "POST") {
+      const body = (await request.json()) as {
+        status?: "active" | "ended" | "aborted" | string;
+        finalized?: boolean;
+      };
+      const state = await this.loadState();
+      if (!state) return new Response("Not found", { status: 404 });
+      if (body.status) state.status = body.status as "active" | "ended" | "aborted";
+      if (body.finalized != null) state.finalized = body.finalized;
+      await this.persistState();
+      return Response.json({ success: true, status: state.status, finalized: state.finalized });
+    }
+
+    // 6g. Block User in Game Session (B6-CHAT-01)
+    if (url.pathname.endsWith("/block-user") && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as {
+        userId?: string;
+        blockedUserId?: string;
+      };
+      if (!body.userId || !body.blockedUserId) {
+        return Response.json(
+          { error: { code: "VALIDATION_FAILED", message: "userId and blockedUserId required" } },
+          { status: 400 },
+        );
+      }
+      this.blockedUsers.add(`${body.userId}:${body.blockedUserId}`);
+      this.blockedUsers.add(`${body.blockedUserId}:${body.userId}`);
+      return Response.json({ success: true });
+    }
+
     // 7. WebSocket Connection Upgrade
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       const state = await this.loadState();
@@ -513,8 +674,59 @@ export class GameSessionDO extends DurableObject<Env> {
       attachment.windowStartMs = now;
       attachment.messageCountInWindow = 1;
     }
-    attachment.lastHeartbeatAt = now;
-    // CRITICAL FIX (N3): Persist updated rate limiter counters back to socket attachment!
+
+    // 2b. User-level message rate limiter: max 25 messages/second across all connections (B6-WS-01 & B7-03)
+    if (attachment.userId) {
+      // 1) Local check for immediate burst protection
+      const userWin = this.userMessageWindows.get(attachment.userId);
+      if (userWin && now - userWin.windowStartMs < 1000) {
+        userWin.count++;
+        if (userWin.count > 25) {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "RATE_LIMITED",
+            message: "WebSocket user rate limit exceeded (max 25/sec)",
+            serverTime: now,
+          });
+          ws.close(1008, "User rate limit exceeded (max 25/sec)");
+          return;
+        }
+      } else {
+        this.userMessageWindows.set(attachment.userId, { windowStartMs: now, count: 1 });
+      }
+
+      // 2) Global cross-DO coordination via UserPresenceDO (B7-03)
+      if (this.env.USER_PRESENCE_DO) {
+        try {
+          const upStub = this.env.USER_PRESENCE_DO.get(
+            this.env.USER_PRESENCE_DO.idFromName(attachment.userId),
+          );
+          const rlRes = await upStub.fetch("http://internal/rate-limit-tick", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ maxPerSec: 25 }),
+          });
+          if (rlRes.status === 429) {
+            this.send(ws, {
+              v: PROTOCOL_VERSION,
+              type: "ERROR",
+              code: "RATE_LIMITED",
+              message: "WebSocket user rate limit exceeded (max 25/sec across connections)",
+              serverTime: now,
+            });
+            ws.close(1008, "User rate limit exceeded (max 25/sec across connections)");
+            return;
+          }
+        } catch {
+          // If UserPresenceDO is transiently unreachable, local limiter maintains safety
+        }
+      }
+    }
+
+    // CRITICAL (CLK-21): Do NOT update lastHeartbeatAt on arbitrary message frames!
+    // Only genuine heartbeat protocol frames count for heartbeat activity.
+    // Persist updated rate limiter counters back to socket attachment:
     ws.serializeAttachment(attachment);
 
     const parsed = parseClientGameFrame(message);
@@ -545,24 +757,31 @@ export class GameSessionDO extends DurableObject<Env> {
     }
 
     switch (frame.type) {
-      case "MOVE_INTENT":
-      case "MOVE": {
-        const payload = "payload" in frame ? frame.payload : frame;
-        await this.handleMove(ws, attachment, payload);
+      case "MOVE_INTENT": {
+        await this.handleMove(ws, attachment, frame.payload);
         break;
       }
 
-      case "DRAW_OFFER":
-      case "OFFER_DRAW": {
+      case "DRAW_OFFER": {
         await this.handleDrawOffer(ws, attachment);
         break;
       }
 
-      case "DRAW_RESPONSE":
-      case "RESPOND_DRAW": {
-        const accept =
-          "accept" in frame ? !!frame.accept : "payload" in frame ? !!frame.payload.accept : false;
-        await this.handleDrawResponse(ws, attachment, accept);
+      case "DRAW_RESPONSE": {
+        await this.handleDrawResponse(ws, attachment, frame.payload.accept);
+        break;
+      }
+
+      case "CHAT_MUTE": {
+        const isMuted = "muted" in frame ? Boolean(frame.muted) : true;
+        attachment.chatMuted = isMuted;
+        ws.serializeAttachment(attachment);
+        this.send(ws, {
+          v: PROTOCOL_VERSION,
+          type: "CHAT_MUTE_ACK",
+          serverTime: now,
+          muted: isMuted,
+        });
         break;
       }
 
@@ -594,6 +813,40 @@ export class GameSessionDO extends DurableObject<Env> {
         break;
       }
 
+      case "HEARTBEAT_PONG":
+      case "PONG": {
+        const rawPingId =
+          ("pingId" in frame && typeof frame.pingId === "string" ? frame.pingId : undefined) ||
+          ("payload" in frame &&
+          frame.payload &&
+          typeof frame.payload === "object" &&
+          "pingId" in frame.payload &&
+          typeof (frame.payload as { pingId?: unknown }).pingId === "string"
+            ? (frame.payload as { pingId?: string }).pingId
+            : undefined);
+
+        // CLK-02 & CLK-03: Server-authoritative RTT via server-issued pingId.
+        // Client cannot manufacture elapsed time or provide client timestamps.
+        if (rawPingId && typeof rawPingId === "string" && rawPingId.trim() !== "") {
+          const pingId = rawPingId.trim();
+          if (attachment.pendingPings?.[pingId]) {
+            const sendTime = attachment.pendingPings[pingId];
+            delete attachment.pendingPings[pingId]; // Single-use consumption prevents replays
+            const rawRtt = Math.max(0, now - sendTime);
+            const clampedRtt = Math.min(rawRtt, PRODUCT_RULES.LAG_CREDIT_CAP_MS * 2);
+            if (attachment.role === "white" || attachment.role === "black") {
+              const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
+              player.rttMs = clampedRtt;
+              player.lastHeartbeatAt = now;
+            }
+            attachment.measuredRttMs = clampedRtt;
+            attachment.lastHeartbeatAt = now;
+          }
+        }
+        ws.serializeAttachment(attachment);
+        break;
+      }
+
       case "HEARTBEAT_PING":
       case "PING": {
         attachment.lastHeartbeatAt = now;
@@ -611,9 +864,6 @@ export class GameSessionDO extends DurableObject<Env> {
         if (attachment.role === "white" || attachment.role === "black") {
           const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
           player.lastHeartbeatAt = now;
-          // N1: Authoritative RTT calculation.
-          // Client cannot declare arbitrary RTT to manipulate clock or lag credit.
-          // Clamped strictly to [0, 2 * LAG_CREDIT_CAP_MS] (max 200ms).
           if (seq && seq > now - 10000 && seq <= now + 1000) {
             const rawRtt = Math.max(0, now - seq);
             const clampedRtt = Math.min(rawRtt, PRODUCT_RULES.LAG_CREDIT_CAP_MS * 2);
@@ -628,6 +878,199 @@ export class GameSessionDO extends DurableObject<Env> {
           type: "HEARTBEAT_PONG",
           serverTime: now,
           payload: { clientSeq: seq },
+        });
+        break;
+      }
+
+      case "CHAT_SEND": {
+        // B6-CHAT-01: spectators cannot send chat messages
+        if (attachment.role === "spectator") {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "FORBIDDEN",
+            message: "Spectators cannot send chat messages in this game",
+            serverTime: now,
+          });
+          break;
+        }
+
+        // B5-CHAT-01: game must be active to send chat
+        if (state.status !== "active") {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "GAME_NOT_ACTIVE",
+            message: "Chat is only available in active games",
+            serverTime: now,
+          });
+          break;
+        }
+
+        // B5-CHAT-03: chat rate limit (max 3 messages per 5 seconds per socket)
+        const chatWindowMs = 5000;
+        const chatWindowStart = attachment.chatWindowStartMs ?? now;
+        if (now - chatWindowStart < chatWindowMs) {
+          attachment.chatCountInWindow = (attachment.chatCountInWindow ?? 0) + 1;
+          if (attachment.chatCountInWindow > 3) {
+            this.send(ws, {
+              v: PROTOCOL_VERSION,
+              type: "ERROR",
+              code: "RATE_LIMITED",
+              message: "Chat rate limit exceeded (max 3 messages per 5 seconds)",
+              serverTime: now,
+            });
+            ws.serializeAttachment(attachment);
+            break;
+          }
+        } else {
+          attachment.chatWindowStartMs = now;
+          attachment.chatCountInWindow = 1;
+        }
+        ws.serializeAttachment(attachment);
+
+        // B6-WS-01: per-user chat rate limit across all sockets (max 3 messages per 5 seconds)
+        if (attachment.userId) {
+          const userChatWin = this.userChatWindows.get(attachment.userId);
+          if (userChatWin && now - userChatWin.windowStartMs < chatWindowMs) {
+            userChatWin.count++;
+            if (userChatWin.count > 3) {
+              this.send(ws, {
+                v: PROTOCOL_VERSION,
+                type: "ERROR",
+                code: "RATE_LIMITED",
+                message:
+                  "User chat rate limit exceeded (max 3 messages per 5 seconds across connections)",
+                serverTime: now,
+              });
+              break;
+            }
+          } else {
+            this.userChatWindows.set(attachment.userId, { windowStartMs: now, count: 1 });
+          }
+
+          // Global cross-DO chat rate limit coordination via UserPresenceDO (B7-03)
+          if (this.env.USER_PRESENCE_DO) {
+            try {
+              const upStub = this.env.USER_PRESENCE_DO.get(
+                this.env.USER_PRESENCE_DO.idFromName(attachment.userId),
+              );
+              const chatRlRes = await upStub.fetch("http://internal/chat-rate-limit-tick", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ maxPerWindow: 3, windowMs: chatWindowMs }),
+              });
+              if (chatRlRes.status === 429) {
+                this.send(ws, {
+                  v: PROTOCOL_VERSION,
+                  type: "ERROR",
+                  code: "RATE_LIMITED",
+                  message:
+                    "User chat rate limit exceeded (max 3 messages per 5 seconds across connections)",
+                  serverTime: now,
+                });
+                break;
+              }
+            } catch {
+              // Local fallback maintains safety
+            }
+          }
+        }
+
+        // B6-CHAT-01: check blocked users between sender and opponent
+        const opponentUserId =
+          attachment.role === "white"
+            ? state.blackPlayer.userId
+            : attachment.role === "black"
+              ? state.whitePlayer.userId
+              : null;
+        if (
+          opponentUserId &&
+          attachment.userId &&
+          (this.blockedUsers.has(`${attachment.userId}:${opponentUserId}`) ||
+            this.blockedUsers.has(`${opponentUserId}:${attachment.userId}`))
+        ) {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "FORBIDDEN",
+            message: "Cannot send chat message to a blocked player",
+            serverTime: now,
+          });
+          break;
+        }
+
+        // B5-CHAT-02: server-authoritative sender identity — never trust client-supplied sender field
+        const rawText = "text" in frame ? (frame as { text?: unknown }).text : undefined;
+        const text = typeof rawText === "string" ? rawText.trim() : "";
+
+        if (text.length === 0) {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "INVALID_FRAME",
+            message: "Chat message text must not be empty",
+            serverTime: now,
+          });
+          break;
+        }
+
+        // B6-PROTO-01 & SRS SEC-12: max 280 characters
+        if (text.length > 280) {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "INVALID_FRAME",
+            message: "Chat message text exceeds maximum length (280 characters)",
+            serverTime: now,
+          });
+          break;
+        }
+
+        // Sender identity is authoritative from socket attachment, never the frame payload
+        const senderName = attachment.userName;
+        const senderRole = attachment.role;
+
+        this.broadcastChat(
+          {
+            v: PROTOCOL_VERSION,
+            type: "CHAT_MESSAGE",
+            id: crypto.randomUUID(),
+            sender: senderName,
+            senderRole,
+            text,
+            timestamp: now,
+          },
+          attachment.userId,
+        );
+        break;
+      }
+
+      case "REQUEST_REMATCH": {
+        // Rematch is post-game only — not supported during active play
+        if (state.status === "active" || state.status === "waiting") {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            code: "INVALID_STATE",
+            message: "Rematch can only be requested after the game ends",
+            serverTime: now,
+          });
+        } else {
+          this.broadcast({
+            v: PROTOCOL_VERSION,
+            type: "REMATCH_OFFERED",
+            from: attachment.role as "white" | "black",
+          });
+        }
+        break;
+      }
+
+      case "RESPOND_REMATCH": {
+        // Acknowledge but decline — rematch creation goes through matchmaking API
+        this.broadcast({
+          v: PROTOCOL_VERSION,
+          type: "REMATCH_DECLINED",
         });
         break;
       }
@@ -684,6 +1127,19 @@ export class GameSessionDO extends DurableObject<Env> {
       role = "white";
     } else if (userId === state.blackPlayer.userId) {
       role = "black";
+    }
+
+    // Defense-in-depth: Guests cannot spectate (SRS AUTH-05, B6-AUTH-01)
+    if (verification.payload.userRole === "guest" && role === "spectator") {
+      this.send(ws, {
+        v: PROTOCOL_VERSION,
+        type: "ERROR",
+        code: "FORBIDDEN",
+        message: "Guest accounts cannot spectate games",
+        serverTime: Date.now(),
+      });
+      ws.close(4001, "Guest accounts cannot spectate games");
+      return;
     }
 
     // RULE: One socket per player (close old socket with code 4004) (H5)
@@ -807,11 +1263,19 @@ export class GameSessionDO extends DurableObject<Env> {
     }
 
     // 3. Move validation with pure chess engine
-    const moveValidation = validateAndApplyMove(state.fen, {
-      from: payload.from,
-      to: payload.to,
-      promotion: payload.promotion as "q" | "r" | "b" | "n" | undefined,
-    });
+    const moveValidation = validateAndApplyMove(
+      state.fen,
+      {
+        from: payload.from,
+        to: payload.to,
+        promotion: payload.promotion as "q" | "r" | "b" | "n" | undefined,
+      },
+      {
+        moves: state.moves,
+        initialFen: state.initialFen,
+        positionCounts: state.positionCounts,
+      },
+    );
 
     if (!moveValidation.valid) {
       this.send(ws, {
@@ -832,8 +1296,6 @@ export class GameSessionDO extends DurableObject<Env> {
 
     const player = attachment.role === "white" ? state.whitePlayer : state.blackPlayer;
     const rtt = player.rttMs ?? attachment.measuredRttMs;
-    player.lastHeartbeatAt = now;
-    attachment.lastHeartbeatAt = now;
 
     // 4. Clock calculation with lag credit (RULE-04) and first-move hold (RULE-01)
     const clockResult = calculateClockAfterMove(
@@ -870,6 +1332,9 @@ export class GameSessionDO extends DurableObject<Env> {
     state.lastMoveServerTime = now;
     state.turn = snapshot.turn;
     state.fen = snapshot.fen;
+    if (snapshot.positionCounts) {
+      state.positionCounts = snapshot.positionCounts;
+    }
     state.ply++;
     state.version++;
     state.moves.push(san);
@@ -1248,238 +1713,187 @@ export class GameSessionDO extends DurableObject<Env> {
    * D1 is written in a single idempotent batch off the move path (Change 4).
    */
   private async finalizeGame(): Promise<void> {
-    const state = await this.loadState();
-    if (!state || state.finalized) return;
-
-    state.endedAt = Date.now();
-    this.timers = []; // Clear active match timers
-
-    // 1. Calculate Glicko-2 ratings if rated and not aborted
-    if (state.rated && state.status === "ended" && state.result && state.result !== "aborted") {
-      const score = state.result === "1-0" ? 1 : state.result === "0-1" ? 0 : 0.5;
-
-      const whiteRd = state.whitePlayer.rd ?? PRODUCT_RULES.GLICKO2_DEFAULT_RD;
-      const whiteVol = state.whitePlayer.vol ?? PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY;
-      const blackRd = state.blackPlayer.rd ?? PRODUCT_RULES.GLICKO2_DEFAULT_RD;
-      const blackVol = state.blackPlayer.vol ?? PRODUCT_RULES.GLICKO2_DEFAULT_VOLATILITY;
-
-      const ratingCalc = applyGameResult({
-        whiteRating: {
-          rating: state.whitePlayer.rating,
-          deviation: whiteRd,
-          volatility: whiteVol,
-        },
-        blackRating: {
-          rating: state.blackPlayer.rating,
-          deviation: blackRd,
-          volatility: blackVol,
-        },
-        score,
-      });
-
-      state.whiteRatingBefore = ratingCalc.white.ratingBefore;
-      state.whiteRatingAfter = ratingCalc.white.ratingAfter;
-      state.whiteRatingDiff = ratingCalc.white.diff;
-      state.whiteRdBefore = ratingCalc.white.rdBefore;
-      state.whiteRdAfter = ratingCalc.white.rdAfter;
-      state.whiteVolBefore = ratingCalc.white.volatilityBefore;
-      state.whiteVolAfter = ratingCalc.white.volatilityAfter;
-
-      state.blackRatingBefore = ratingCalc.black.ratingBefore;
-      state.blackRatingAfter = ratingCalc.black.ratingAfter;
-      state.blackRatingDiff = ratingCalc.black.diff;
-      state.blackRdBefore = ratingCalc.black.rdBefore;
-      state.blackRdAfter = ratingCalc.black.rdAfter;
-      state.blackVolBefore = ratingCalc.black.volatilityBefore;
-      state.blackVolAfter = ratingCalc.black.volatilityAfter;
+    if (this.finalizationPromise) {
+      await this.finalizationPromise;
+      return;
     }
 
-    // 2. Build official PGN with headers
-    state.pgn = buildPgn({
-      event: state.rated ? "ET Chess Rated Match" : "ET Chess Casual Match",
-      white: state.whitePlayer.userName,
-      black: state.blackPlayer.userName,
-      whiteElo: state.whitePlayer.rating,
-      blackElo: state.blackPlayer.rating,
-      timeControl: state.timeControl,
-      result:
-        (state.result === "aborted" ? "*" : (state.result as "1-0" | "0-1" | "1/2-1/2" | "*")) ||
-        "*",
-      termination: state.termination,
-      moves: state.moves,
-    });
+    this.finalizationPromise = (async () => {
+      const state = await this.loadState();
+      if (!state || state.finalized) return;
 
-    // 3. Batch write to D1 Database with idempotence and retry resilience (H1 & H2)
-    if (!state.persistedToD1) {
-      try {
-        const db = drizzle(this.env.DB, { schema });
+      state.endedAt = Date.now();
+      this.timers = []; // Clear active match timers
 
-        // Idempotency check: verify whether this game record already exists in D1
-        const [existingGame] = await db
-          .select({ id: schema.games.id })
-          .from(schema.games)
-          .where(eq(schema.games.id, state.gameId));
+      // 1. Build official PGN with headers
+      state.pgn = buildPgn({
+        event: state.rated ? "ET Chess Rated Match" : "ET Chess Casual Match",
+        white: state.whitePlayer.userName,
+        black: state.blackPlayer.userName,
+        whiteElo: state.whitePlayer.rating,
+        blackElo: state.blackPlayer.rating,
+        timeControl: state.timeControl,
+        result:
+          (state.result === "aborted" ? "*" : (state.result as "1-0" | "0-1" | "1/2-1/2" | "*")) ||
+          "*",
+        termination: state.termination,
+        moves: state.moves,
+      });
 
-        if (existingGame) {
-          // Game was already written to D1; do NOT re-apply rating changes!
-          state.persistedToD1 = true;
-          state.finalized = true;
-          await this.persistState();
-          return;
-        }
-
-        let whiteUpdateSet: Record<string, unknown> | null = null;
-        let blackUpdateSet: Record<string, unknown> | null = null;
-
-        if (
-          state.rated &&
-          state.status === "ended" &&
-          state.result !== "aborted" &&
-          state.whiteRatingAfter != null &&
-          state.blackRatingAfter != null
-        ) {
-          const whiteCurrent = await fetchUserCategoryRating(
-            db,
-            state.whitePlayer.userId,
-            state.category,
-          );
-          const blackCurrent = await fetchUserCategoryRating(
-            db,
-            state.blackPlayer.userId,
-            state.category,
-          );
-
-          const whiteOutcome: "win" | "loss" | "draw" =
-            state.result === "1-0" ? "win" : state.result === "0-1" ? "loss" : "draw";
-          const blackOutcome: "win" | "loss" | "draw" =
-            state.result === "0-1" ? "win" : state.result === "1-0" ? "loss" : "draw";
-
-          whiteUpdateSet = buildRatingUpdateSet(
-            state.category,
+      // 2. Transactional Exactly-Once Settlement in D1 (FINAL-01, RATING-01, RATING-02, RATING-03)
+      if (!state.persistedToD1) {
+        try {
+          const settlement = await settleGameRatings(
+            this.env.DB,
             {
-              rating: state.whiteRatingAfter,
-              rd: state.whiteRdAfter ?? whiteCurrent.rd,
-              vol: state.whiteVolAfter ?? whiteCurrent.vol,
-            },
-            whiteCurrent,
-            whiteOutcome,
-          );
-
-          blackUpdateSet = buildRatingUpdateSet(
-            state.category,
-            {
-              rating: state.blackRatingAfter,
-              rd: state.blackRdAfter ?? blackCurrent.rd,
-              vol: state.blackVolAfter ?? blackCurrent.vol,
-            },
-            blackCurrent,
-            blackOutcome,
-          );
-        }
-
-        await db.batch([
-          db
-            .insert(schema.games)
-            .values({
-              id: state.gameId,
-              whitePlayerId: state.whitePlayer.userId,
-              blackPlayerId: state.blackPlayer.userId,
+              gameId: state.gameId,
+              whiteUserId: state.whitePlayer.userId,
+              blackUserId: state.blackPlayer.userId,
               timeControl: state.timeControl,
               category: state.category,
-              moves: JSON.stringify(state.moves),
+              moves: state.moves,
               result: state.result || "*",
               termination: state.termination || "unknown",
               rated: state.rated,
               gameType: state.isFriendGame ? "challenge" : "matchmaking",
-              whiteRatingBefore: state.result === "aborted" ? null : state.whiteRatingBefore,
-              whiteRatingChange: state.result === "aborted" ? null : state.whiteRatingDiff,
-              blackRatingBefore: state.result === "aborted" ? null : state.blackRatingBefore,
-              blackRatingChange: state.result === "aborted" ? null : state.blackRatingDiff,
-              startedAt: new Date(state.startedAt),
-              endedAt: new Date(state.endedAt),
-            })
-            .onConflictDoNothing({ target: schema.games.id }),
-          ...(whiteUpdateSet
-            ? [
-                db
-                  .update(schema.ratings)
-                  .set(whiteUpdateSet)
-                  .where(eq(schema.ratings.userId, state.whitePlayer.userId)),
-              ]
-            : []),
-          ...(blackUpdateSet
-            ? [
-                db
-                  .update(schema.ratings)
-                  .set(blackUpdateSet)
-                  .where(eq(schema.ratings.userId, state.blackPlayer.userId)),
-              ]
-            : []),
-        ]);
+              startedAt: state.startedAt,
+              endedAt: state.endedAt,
+            },
+            this.env,
+          );
 
-        state.persistedToD1 = true;
-        state.finalized = true;
-      } catch (err) {
-        console.error("Failed to write game batch to D1, scheduling retry:", err);
-        state.persistedToD1 = false;
-        // Schedule retry timer for D1 persistence (H2)
+          if (settlement.settled) {
+            state.persistedToD1 = true;
+            state.finalized = true;
+            if (settlement.whiteRatingBefore != null) {
+              state.whiteRatingBefore = settlement.whiteRatingBefore;
+            }
+            if (settlement.whiteRatingAfter != null) {
+              state.whiteRatingAfter = settlement.whiteRatingAfter;
+            }
+            if (settlement.whiteRatingDiff != null) {
+              state.whiteRatingDiff = settlement.whiteRatingDiff;
+            }
+            if (settlement.blackRatingBefore != null) {
+              state.blackRatingBefore = settlement.blackRatingBefore;
+            }
+            if (settlement.blackRatingAfter != null) {
+              state.blackRatingAfter = settlement.blackRatingAfter;
+            }
+            if (settlement.blackRatingDiff != null) {
+              state.blackRatingDiff = settlement.blackRatingDiff;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to write game batch to D1, scheduling retry:", err);
+          state.persistedToD1 = false;
+          // Schedule retry timer for D1 persistence
+          this.addTimer({
+            kind: "FINALIZE_RETRY",
+            dueAt: Date.now() + 2000,
+            ply: state.ply,
+            version: state.version,
+          });
+        }
+      }
+
+      // 3. Persist finalized state to DO storage
+      await this.persistState();
+
+      // 4. Broadcast GAME_TERMINATED frame exactly once (FINAL-01)
+      if (state.persistedToD1 && !state.terminalBroadcasted) {
+        state.terminalBroadcasted = true;
+        this.broadcast({
+          v: PROTOCOL_VERSION,
+          type: "GAME_TERMINATED",
+          serverTime: Date.now(),
+          payload: {
+            result: state.result || "aborted",
+            termination: state.termination || "unknown",
+            winnerRole: state.winnerRole,
+            whiteRatingBefore: state.whiteRatingBefore,
+            whiteRatingAfter: state.whiteRatingAfter,
+            whiteRatingDiff: state.whiteRatingDiff,
+            blackRatingBefore: state.blackRatingBefore,
+            blackRatingAfter: state.blackRatingAfter,
+            blackRatingDiff: state.blackRatingDiff,
+          },
+        });
+
+        // TEST-04: Structured observability log without secrets
+        console.log(
+          JSON.stringify({
+            event: "GAME_FINALIZED",
+            gameId: state.gameId,
+            terminalReason: state.termination,
+            finalPly: state.ply,
+            result: state.result,
+            winnerRole: state.winnerRole,
+            settlementState: "settled",
+            idempotencyKey: state.gameId,
+            startedAt: state.startedAt,
+            endedAt: state.endedAt,
+          }),
+        );
+
+        MetricsCollector.gamesEnded(state.termination || "unknown", {
+          rated: state.rated,
+          result: state.result,
+        });
+
+        // Release live game lock in MatchmakerDO
+        if (this.env.MATCHMAKER_DO) {
+          try {
+            const mmStub = this.env.MATCHMAKER_DO.get(this.env.MATCHMAKER_DO.idFromName("global"));
+            await mmStub.fetch("http://internal/clear-active-game", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ gameId: state.gameId }),
+            });
+          } catch {
+            // Best-effort MatchmakerDO lock cleanup
+          }
+        }
+
+        // Release live game lock in UserPresenceDO for both players (B4-PRES-03)
+        if (this.env.USER_PRESENCE_DO) {
+          const playersToRelease = [state.whitePlayer?.userId, state.blackPlayer?.userId].filter(
+            (id): id is string => Boolean(id),
+          );
+
+          for (const uid of playersToRelease) {
+            try {
+              const upStub = this.env.USER_PRESENCE_DO.get(
+                this.env.USER_PRESENCE_DO.idFromName(uid),
+              );
+              await upStub.fetch("http://internal/release-live-game", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gameId: state.gameId }),
+              });
+            } catch {
+              // Best-effort UserPresenceDO lock cleanup
+            }
+          }
+        }
+
+        // Schedule auto-close alarm in 5 minutes
         this.addTimer({
-          kind: "FINALIZE_RETRY",
-          dueAt: Date.now() + 2000,
+          kind: "AUTO_CLOSE",
+          dueAt: Date.now() + 300_000,
           ply: state.ply,
           version: state.version,
         });
+        await this.syncAlarm();
+        await this.persistState();
       }
+    })();
+
+    try {
+      await this.finalizationPromise;
+    } finally {
+      this.finalizationPromise = null;
     }
-
-    // 4. Persist finalized state to DO storage
-    await this.persistState();
-
-    // 5. Broadcast GAME_TERMINATED frame
-    this.broadcast({
-      v: PROTOCOL_VERSION,
-      type: "GAME_TERMINATED",
-      serverTime: Date.now(),
-      payload: {
-        result: state.result || "aborted",
-        termination: state.termination || "unknown",
-        winnerRole: state.winnerRole,
-        whiteRatingBefore: state.whiteRatingBefore,
-        whiteRatingAfter: state.whiteRatingAfter,
-        whiteRatingDiff: state.whiteRatingDiff,
-        blackRatingBefore: state.blackRatingBefore,
-        blackRatingAfter: state.blackRatingAfter,
-        blackRatingDiff: state.blackRatingDiff,
-      },
-    });
-
-    MetricsCollector.gamesEnded(state.termination || "unknown", {
-      rated: state.rated,
-      result: state.result,
-    });
-
-    // Free active game locks in MatchmakerDO so players can queue or start new games
-    if (this.env.MATCHMAKER_DO) {
-      try {
-        const mmStub = this.env.MATCHMAKER_DO.get(this.env.MATCHMAKER_DO.idFromName("global"));
-        await mmStub.fetch("http://internal/clear-active-game", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ gameId: state.gameId }),
-        });
-      } catch {
-        // Best-effort MatchmakerDO lock cleanup
-      }
-    }
-
-    // 6. Schedule auto-close alarm in 5 minutes
-    this.addTimer({
-      kind: "AUTO_CLOSE",
-      dueAt: Date.now() + 300_000,
-      ply: state.ply,
-      version: state.version,
-    });
-    await this.syncAlarm();
   }
 
   /**
@@ -1491,16 +1905,18 @@ export class GameSessionDO extends DurableObject<Env> {
     if (!state) return;
 
     const now = Date.now();
-    // Alarm precision: only execute timers that are actually due (within 100ms tolerance for clock jitter).
-    // Stale alarms that wake early will never prematurely execute future timers.
-    const threshold = now + 100;
-    const dueTimers = this.timers.filter((t) => t.dueAt <= threshold);
+    // CLK-07, CLK-10, CLK-13: Exact boundary precision — only execute timers that are actually due (dueAt <= now).
+    const dueTimers = this.timers.filter((t) => t.dueAt <= now);
 
-    // Silent network drop detection via heartbeat timeout (15 seconds) (H5, N4)
+    // Silent network drop detection via heartbeat timeout (15 seconds) (H5, N4, CLK-20)
     if (state.status === "active") {
       for (const role of ["white", "black"] as const) {
         const player = role === "white" ? state.whitePlayer : state.blackPlayer;
-        if (player.connected && player.lastHeartbeatAt && now - player.lastHeartbeatAt > 15000) {
+        if (
+          player.connected &&
+          player.lastHeartbeatAt &&
+          now - player.lastHeartbeatAt >= PRODUCT_RULES.DISCONNECT_TIMEOUT_MS
+        ) {
           player.connected = false;
           player.disconnectedAt = now;
           this.addTimer({
@@ -1530,10 +1946,22 @@ export class GameSessionDO extends DurableObject<Env> {
       switch (timer.kind) {
         case "HEARTBEAT_WATCHDOG": {
           if (state.status !== "active") break;
-          // Re-arm watchdog check every 15s while active
+          // CLK-20: Dynamic rescheduling to ensure silent connections are detected within 15 seconds
+          const connectedPlayers = [state.whitePlayer, state.blackPlayer].filter(
+            (p) => p.connected && p.lastHeartbeatAt,
+          );
+          let nextCheckDueAt = now + PRODUCT_RULES.DISCONNECT_TIMEOUT_MS;
+          if (connectedPlayers.length > 0) {
+            const earliestExpiry = Math.min(
+              ...connectedPlayers.map(
+                (p) => (p.lastHeartbeatAt ?? now) + PRODUCT_RULES.DISCONNECT_TIMEOUT_MS,
+              ),
+            );
+            nextCheckDueAt = Math.max(now + 1000, earliestExpiry);
+          }
           this.addTimer({
             kind: "HEARTBEAT_WATCHDOG",
-            dueAt: now + 15000,
+            dueAt: nextCheckDueAt,
             ply: state.ply,
             version: state.version,
           });
@@ -1615,7 +2043,7 @@ export class GameSessionDO extends DurableObject<Env> {
     }
 
     // Purge executed timers and re-arm alarm
-    this.timers = this.timers.filter((t) => t.dueAt > threshold);
+    this.timers = this.timers.filter((t) => t.dueAt > now);
     await this.ctx.storage.put("timers", this.timers);
     await this.syncAlarm();
   }

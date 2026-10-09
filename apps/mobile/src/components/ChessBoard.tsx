@@ -1,41 +1,34 @@
+import {
+  BOARD_THEMES,
+  type BoardThemeKey,
+  CLASSIC_PIECE_SVGS,
+  type PieceSymbol,
+} from "@etchess/assets";
 import type { Square } from "@etchess/chess-core";
 import type React from "react";
 import { useMemo, useState } from "react";
 import { Dimensions, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SvgXml } from "react-native-svg";
 import { useMobileStore } from "../store/mobileStore";
-import { COLORS } from "../theme/colors";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const BOARD_SIZE = Math.min(SCREEN_WIDTH - 24, 380);
 const SQUARE_SIZE = BOARD_SIZE / 8;
 
-// Standard Unicode chess piece glyphs with crisp styling
-const PIECE_SYMBOLS: Record<string, string> = {
-  p: "♟",
-  r: "♜",
-  n: "♞",
-  b: "♝",
-  q: "♛",
-  k: "♚",
-  P: "♙",
-  R: "♖",
-  N: "♘",
-  B: "♗",
-  Q: "♕",
-  K: "♔",
-};
-
 interface ChessBoardProps {
   flipped?: boolean;
+  theme?: BoardThemeKey;
 }
 
-export const ChessBoard: React.FC<ChessBoardProps> = ({ flipped = false }) => {
+export const ChessBoard: React.FC<ChessBoardProps> = ({ flipped = false, theme = "classic" }) => {
   const { chess, game, makeMove } = useMobileStore();
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{
     from: Square;
     to: Square;
   } | null>(null);
+
+  const boardTheme = BOARD_THEMES[theme] || BOARD_THEMES.classic;
 
   // Files and Ranks order depending on orientation
   const files = useMemo(
@@ -109,9 +102,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ flipped = false }) => {
     }
   };
 
-  const handlePromotionSelection = (piece: "q" | "r" | "b" | "n") => {
+  const handlePromotionSelection = (promoType: "q" | "r" | "b" | "n") => {
     if (pendingPromotion) {
-      makeMove(pendingPromotion.from, pendingPromotion.to, piece);
+      makeMove(pendingPromotion.from, pendingPromotion.to, promoType);
       setPendingPromotion(null);
       setSelectedSquare(null);
     }
@@ -119,7 +112,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ flipped = false }) => {
 
   return (
     <View style={styles.boardContainer}>
-      <View style={styles.board}>
+      <View
+        style={[
+          styles.board,
+          {
+            borderColor: boardTheme.borderColor,
+          },
+        ]}
+      >
         {ranks.map((rank, rankIdx) => (
           <View key={`rank-${rank}`} style={styles.row}>
             {files.map((file, fileIdx) => {
@@ -128,65 +128,63 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ flipped = false }) => {
               const isDarkSquare = (rankIdx + fileIdx) % 2 === 1;
               const isSelected = selectedSquare === square;
               const isDestination = legalDestinations.has(square);
-              const isLastMove = game?.lastMove?.from === square || game?.lastMove?.to === square;
+              const isLastMoveFrom = game?.lastMove?.from === square;
+              const isLastMoveTo = game?.lastMove?.to === square;
               const isCheckKing =
                 game?.isCheck && piece?.type === "k" && piece.color === chess.turn();
+
+              const squareBaseColor = isDarkSquare ? boardTheme.dark : boardTheme.light;
+              const coordColor = isDarkSquare ? boardTheme.light : boardTheme.dark;
+
+              // Compose piece symbol if piece exists
+              const pieceSymbol = piece
+                ? (`${piece.color}${piece.type.toUpperCase()}` as PieceSymbol)
+                : null;
+              const pieceSvg = pieceSymbol ? CLASSIC_PIECE_SVGS[pieceSymbol] : null;
 
               return (
                 <TouchableOpacity
                   key={square}
                   style={[
                     styles.square,
-                    {
-                      backgroundColor: isDarkSquare ? "#4A7057" : "#E2E8F0",
-                    },
-                    isLastMove && styles.lastMoveSquare,
-                    isSelected && styles.selectedSquare,
-                    isCheckKing && styles.checkSquare,
+                    { backgroundColor: squareBaseColor },
+                    isLastMoveFrom && { backgroundColor: boardTheme.lastMoveFrom },
+                    isLastMoveTo && { backgroundColor: boardTheme.lastMoveTo },
+                    isSelected && { backgroundColor: boardTheme.selected },
+                    isCheckKing && { backgroundColor: boardTheme.check },
                   ]}
                   onPress={() => handleSquarePress(square)}
                   activeOpacity={0.9}
                 >
                   {/* File / Rank coordinates */}
                   {fileIdx === 0 && (
-                    <Text
-                      style={[
-                        styles.rankCoordinate,
-                        { color: isDarkSquare ? "#E2E8F0" : "#4A7057" },
-                      ]}
-                    >
-                      {rank}
-                    </Text>
+                    <Text style={[styles.rankCoordinate, { color: coordColor }]}>{rank}</Text>
                   )}
                   {rankIdx === 7 && (
-                    <Text
-                      style={[
-                        styles.fileCoordinate,
-                        { color: isDarkSquare ? "#E2E8F0" : "#4A7057" },
-                      ]}
-                    >
-                      {file}
-                    </Text>
+                    <Text style={[styles.fileCoordinate, { color: coordColor }]}>{file}</Text>
                   )}
 
-                  {/* Piece */}
-                  {piece && (
-                    <Text
-                      style={[
-                        styles.pieceText,
-                        { color: piece.color === "w" ? "#FFFFFF" : "#1A1A1A" },
-                        piece.color === "w" && styles.whitePieceShadow,
-                      ]}
-                    >
-                      {piece.color === "w"
-                        ? PIECE_SYMBOLS[piece.type.toUpperCase()]
-                        : PIECE_SYMBOLS[piece.type.toLowerCase()]}
-                    </Text>
+                  {/* Piece Rendering with Canonical SVG */}
+                  {pieceSvg && (
+                    <View style={styles.pieceContainer} pointerEvents="none">
+                      <SvgXml
+                        xml={pieceSvg}
+                        width={SQUARE_SIZE * 0.88}
+                        height={SQUARE_SIZE * 0.88}
+                      />
+                    </View>
                   )}
 
-                  {/* Destination Dot / Ring indicator */}
+                  {/* Legal Move Destination Indicator */}
                   {isDestination && (
-                    <View style={piece ? styles.captureRing : styles.destinationDot} />
+                    <View
+                      style={
+                        piece
+                          ? [styles.captureRing, { borderColor: boardTheme.validCaptureRing }]
+                          : [styles.destinationDot, { backgroundColor: boardTheme.validDot }]
+                      }
+                      pointerEvents="none"
+                    />
                   )}
                 </TouchableOpacity>
               );
@@ -195,25 +193,28 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ flipped = false }) => {
         ))}
       </View>
 
-      {/* Pawn Promotion Modal */}
+      {/* Pawn Promotion Modal with Vector Piece SVGs */}
       <Modal visible={!!pendingPromotion} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
           <View style={styles.promotionCard}>
             <Text style={styles.promotionTitle}>Promote Pawn</Text>
             <View style={styles.promotionButtons}>
-              {(["q", "r", "b", "n"] as const).map((p) => (
-                <TouchableOpacity
-                  key={p}
-                  style={styles.promotionOption}
-                  onPress={() => handlePromotionSelection(p)}
-                >
-                  <Text style={styles.promotionPieceText}>
-                    {chess.turn() === "w"
-                      ? PIECE_SYMBOLS[p.toUpperCase()]
-                      : PIECE_SYMBOLS[p.toLowerCase()]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {(["q", "r", "b", "n"] as const).map((p) => {
+                const turnColor = chess.turn() || "w";
+                const promoSymbol = `${turnColor}${p.toUpperCase()}` as PieceSymbol;
+                const promoSvg = CLASSIC_PIECE_SVGS[promoSymbol];
+
+                return (
+                  <TouchableOpacity
+                    key={p}
+                    style={styles.promotionOption}
+                    onPress={() => handlePromotionSelection(p)}
+                    activeOpacity={0.7}
+                  >
+                    {promoSvg ? <SvgXml xml={promoSvg} width={38} height={38} /> : null}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
         </View>
@@ -231,10 +232,15 @@ const styles = StyleSheet.create({
   board: {
     width: BOARD_SIZE,
     height: BOARD_SIZE,
-    borderRadius: 8,
+    borderRadius: 16,
     overflow: "hidden",
     borderWidth: 2,
-    borderColor: COLORS.border,
+    backgroundColor: "#0a0a0a",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 8,
   },
   row: {
     flexDirection: "row",
@@ -247,53 +253,40 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     position: "relative",
   },
-  selectedSquare: {
-    backgroundColor: "rgba(246, 246, 105, 0.75)",
-  },
-  lastMoveSquare: {
-    backgroundColor: "rgba(0, 230, 153, 0.35)",
-  },
-  checkSquare: {
-    backgroundColor: "rgba(239, 68, 68, 0.7)",
-  },
-  pieceText: {
-    fontSize: SQUARE_SIZE * 0.76,
-    lineHeight: SQUARE_SIZE,
-    textAlign: "center",
-  },
-  whitePieceShadow: {
-    textShadowColor: "rgba(0, 0, 0, 0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+  pieceContainer: {
+    width: SQUARE_SIZE,
+    height: SQUARE_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
   },
   destinationDot: {
     position: "absolute",
-    width: SQUARE_SIZE * 0.3,
-    height: SQUARE_SIZE * 0.3,
-    borderRadius: (SQUARE_SIZE * 0.3) / 2,
-    backgroundColor: "rgba(0, 230, 153, 0.7)",
+    width: SQUARE_SIZE * 0.32,
+    height: SQUARE_SIZE * 0.32,
+    borderRadius: (SQUARE_SIZE * 0.32) / 2,
   },
   captureRing: {
     position: "absolute",
-    width: SQUARE_SIZE * 0.85,
-    height: SQUARE_SIZE * 0.85,
-    borderRadius: (SQUARE_SIZE * 0.85) / 2,
-    borderWidth: 3,
-    borderColor: "rgba(0, 230, 153, 0.85)",
+    width: SQUARE_SIZE * 0.88,
+    height: SQUARE_SIZE * 0.88,
+    borderRadius: (SQUARE_SIZE * 0.88) / 2,
+    borderWidth: 3.5,
   },
   rankCoordinate: {
     position: "absolute",
     top: 2,
     left: 3,
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "700",
+    opacity: 0.9,
   },
   fileCoordinate: {
     position: "absolute",
     bottom: 2,
     right: 3,
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "700",
+    opacity: 0.9,
   },
   modalBackdrop: {
     flex: 1,
@@ -302,18 +295,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   promotionCard: {
-    width: 280,
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 20,
+    width: 290,
+    backgroundColor: "#171717",
+    borderRadius: 20,
+    padding: 22,
     borderWidth: 1,
-    borderColor: COLORS.primaryBorder,
+    borderColor: "#262626",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
   },
   promotionTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "700",
-    color: COLORS.text,
+    color: "#e5e5e5",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
     marginBottom: 16,
   },
   promotionButtons: {
@@ -321,17 +321,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   promotionOption: {
-    width: 50,
-    height: 50,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: "#262626",
+    borderWidth: 1.5,
+    borderColor: "#404040",
     alignItems: "center",
     justifyContent: "center",
-  },
-  promotionPieceText: {
-    fontSize: 32,
-    color: COLORS.text,
   },
 });

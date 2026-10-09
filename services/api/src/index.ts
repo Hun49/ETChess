@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { createAuth } from "./auth";
 import { GameSessionDO } from "./do/GameSessionDO";
 import { MatchmakerDO } from "./do/MatchmakerDO";
+import { UserPresenceDO } from "./do/UserPresenceDO";
 import { isAllowedOrigin } from "./lib/cors";
 import { globalErrorHandler, globalNotFoundHandler } from "./middleware/errorHandler";
 import { requestLoggerMiddleware } from "./middleware/logger";
@@ -19,7 +20,7 @@ import { ticketRoute } from "./routes/tickets";
 import { usersRoute } from "./routes/users";
 import type { Env } from "./types";
 
-export { GameSessionDO, MatchmakerDO };
+export { GameSessionDO, MatchmakerDO, UserPresenceDO };
 
 const app = new Hono<{
   Bindings: Env;
@@ -143,8 +144,8 @@ app.get("/ws/game/:gameId", async (c) => {
   return stub.fetch(c.req.raw);
 });
 
-// 10. WebSocket Proxy to MatchmakerDO (/ws/user)
-app.get("/ws/user", async (c) => {
+// 10. WebSocket Proxy to MatchmakerDO or UserPresenceDO (/ws/user and /ws/user/:userId)
+app.get("/ws/user/:userId?", async (c) => {
   const origin = c.req.header("origin");
   if (origin && !isAllowedOrigin(origin, c.env)) {
     return c.json(
@@ -183,6 +184,13 @@ app.get("/ws/user", async (c) => {
       426,
     );
   }
+
+  const userIdParam = c.req.param("userId") || c.req.header("x-user-id");
+  if (userIdParam && c.env.USER_PRESENCE_DO) {
+    const stub = c.env.USER_PRESENCE_DO.get(c.env.USER_PRESENCE_DO.idFromName(userIdParam));
+    return stub.fetch(c.req.raw);
+  }
+
   const id = c.env.MATCHMAKER_DO.idFromName("global");
   const stub = c.env.MATCHMAKER_DO.get(id);
   return stub.fetch(c.req.raw);

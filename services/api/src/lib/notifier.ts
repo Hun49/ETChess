@@ -10,15 +10,32 @@ export async function notifyUserChannel(
   userId: string,
   frame: ServerUserFrame,
 ): Promise<void> {
-  try {
-    const id = env.MATCHMAKER_DO.idFromName("global");
-    const stub = env.MATCHMAKER_DO.get(id);
-    await stub.fetch("http://internal/notify-user", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, frame }),
-    });
-  } catch (err) {
-    console.error("Failed to notify user channel:", err);
+  // 1. Deliver to UserPresenceDO if available (B4-PRES-04)
+  if (env.USER_PRESENCE_DO) {
+    try {
+      const upStub = env.USER_PRESENCE_DO.get(env.USER_PRESENCE_DO.idFromName(userId));
+      await upStub.fetch("http://internal/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frame }),
+      });
+    } catch (err) {
+      console.error("Failed to notify UserPresenceDO:", err);
+    }
+  }
+
+  // 2. Deliver to global MatchmakerDO for backward compatibility with active sockets
+  if (env.MATCHMAKER_DO) {
+    try {
+      const id = env.MATCHMAKER_DO.idFromName("global");
+      const stub = env.MATCHMAKER_DO.get(id);
+      await stub.fetch("http://internal/notify-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, frame }),
+      });
+    } catch (err) {
+      console.error("Failed to notify MatchmakerDO:", err);
+    }
   }
 }

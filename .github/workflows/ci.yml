@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: Lint, Typecheck, Test, and Build
@@ -17,17 +20,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@a3252b78d4705d53078cb0368153cc9662d2e993 # v4.0.0
         with:
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: "pnpm"
@@ -44,7 +47,6 @@ jobs:
       - name: Run automated test suite
         run: pnpm test
 
-      - name: Build Web and Admin applications
-        run: |
-          pnpm --filter @etchess/admin build
-          pnpm --filter @etchess/web build
+      - name: Build all applications and packages
+        run: pnpm run build
+

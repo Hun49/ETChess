@@ -20,7 +20,8 @@ export async function handleReadyCheck(c: Context<{ Bindings: Env; Variables: Ho
     // 2. Validate environment bindings and secrets (N2)
     const hasGameDO = !!c.env.GAME_SESSION_DO;
     const hasMatchmakerDO = !!c.env.MATCHMAKER_DO;
-    const doHealthy = hasGameDO && hasMatchmakerDO;
+    const hasPresenceDO = !!c.env.USER_PRESENCE_DO;
+    const doHealthy = hasGameDO && hasMatchmakerDO && hasPresenceDO;
     const envValidation = validateEnvironment(c.env);
 
     if (!d1Healthy || !doHealthy || !envValidation.valid) {

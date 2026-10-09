@@ -1,3 +1,4 @@
+import { BOARD_THEMES, CLASSIC_PIECE_SVGS, type PieceSymbol } from "@etchess/assets";
 import { getLegalMoves, isInCheck } from "@etchess/chess-core";
 import { AlertCircle, Crown } from "lucide-react";
 import type React from "react";
@@ -5,36 +6,36 @@ import { useMemo, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { type BoardTheme, useGameStore } from "../store/gameStore";
 
-// Theme square color definitions
+// Theme square color definitions backed by canonical @etchess/assets tokens
 const THEME_STYLES: Record<BoardTheme, { light: React.CSSProperties; dark: React.CSSProperties }> =
   {
     slate: {
-      light: { backgroundColor: "#cbd5e1" }, // slate-300
-      dark: { backgroundColor: "#475569" }, // slate-600
+      light: { backgroundColor: BOARD_THEMES.slate.light },
+      dark: { backgroundColor: BOARD_THEMES.slate.dark },
     },
     wood: {
-      light: { backgroundColor: "#f0d9b5" },
-      dark: { backgroundColor: "#b58863" },
+      light: { backgroundColor: BOARD_THEMES.wood.light },
+      dark: { backgroundColor: BOARD_THEMES.wood.dark },
     },
     emerald: {
-      light: { backgroundColor: "#e2e8f0" },
-      dark: { backgroundColor: "#2d6a4f" },
+      light: { backgroundColor: BOARD_THEMES.emerald.light },
+      dark: { backgroundColor: BOARD_THEMES.emerald.dark },
     },
     ocean: {
-      light: { backgroundColor: "#dee3e6" },
-      dark: { backgroundColor: "#386687" },
+      light: { backgroundColor: BOARD_THEMES.ocean.light },
+      dark: { backgroundColor: BOARD_THEMES.ocean.dark },
     },
     classic: {
-      light: { backgroundColor: "#e2e8f0" },
-      dark: { backgroundColor: "#2d6a4f" },
+      light: { backgroundColor: BOARD_THEMES.classic.light },
+      dark: { backgroundColor: BOARD_THEMES.classic.dark },
     },
     blue: {
-      light: { backgroundColor: "#dee3e6" },
-      dark: { backgroundColor: "#386687" },
+      light: { backgroundColor: BOARD_THEMES.blue.light },
+      dark: { backgroundColor: BOARD_THEMES.blue.dark },
     },
     dark: {
-      light: { backgroundColor: "#334155" },
-      dark: { backgroundColor: "#1e293b" },
+      light: { backgroundColor: BOARD_THEMES.dark.light },
+      dark: { backgroundColor: BOARD_THEMES.dark.dark },
     },
   };
 
@@ -395,16 +396,29 @@ export const ChessBoardView: React.FC = () => {
                 Promote Pawn
               </div>
               <div className="grid grid-cols-4 gap-2">
-                {(["q", "r", "b", "n"] as const).map((promo) => (
-                  <button
-                    key={promo}
-                    type="button"
-                    onClick={() => selectPromotion(promo)}
-                    className="flex h-14 w-14 items-center justify-center rounded-xl border border-neutral-700 bg-neutral-800 text-3xl text-white hover:border-emerald-500 hover:bg-emerald-950/40 transition-all cursor-pointer"
-                  >
-                    {PIECE_SYMBOLS[promo]}
-                  </button>
-                ))}
+                {(["q", "r", "b", "n"] as const).map((promo) => {
+                  const promoKey = `${turn}${promo.toUpperCase()}` as PieceSymbol;
+                  const svg = CLASSIC_PIECE_SVGS[promoKey];
+
+                  return (
+                    <button
+                      key={promo}
+                      type="button"
+                      onClick={() => selectPromotion(promo)}
+                      className="flex h-14 w-14 items-center justify-center rounded-xl border border-neutral-700 bg-neutral-800 p-2 text-white hover:border-emerald-500 hover:bg-emerald-950/40 transition-all cursor-pointer"
+                    >
+                      {svg ? (
+                        <img
+                          src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`}
+                          alt={promo}
+                          className="w-10 h-10 object-contain pointer-events-none"
+                        />
+                      ) : (
+                        <span className="text-3xl">{PIECE_SYMBOLS[promo]}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

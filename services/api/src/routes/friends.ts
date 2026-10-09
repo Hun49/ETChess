@@ -186,18 +186,25 @@ const processFriendRequest = async (
     }
   }
 
-  // 5. Insert new friend request
+  // 5. Insert new friend request (guarded by database unique constraint friends_canonical_pair_idx)
   const newFriendshipId = crypto.randomUUID();
   const now = new Date();
 
-  await db.insert(schema.friends).values({
-    id: newFriendshipId,
-    userId: user.id,
-    friendId: targetUser.id,
-    status: "pending",
-    createdAt: now,
-    updatedAt: now,
-  });
+  try {
+    await db.insert(schema.friends).values({
+      id: newFriendshipId,
+      userId: user.id,
+      friendId: targetUser.id,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (_err: unknown) {
+    return c.json(
+      { error: { code: "CONFLICT", message: "Friend request or relationship already exists" } },
+      409,
+    );
+  }
 
   return c.json(
     {

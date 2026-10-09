@@ -35,25 +35,9 @@ export const ClientUserFrameSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("JOIN_QUEUE"),
-    requestId: z.string().optional(),
-    payload: z.object({
-      timeControl: z.string().optional(),
-      timeControlId: z.string().optional(),
-      rated: z.boolean(),
-    }),
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
     type: z.literal("QUEUE_LEAVE"),
     requestId: z.string().optional(),
     payload: ClientQueueLeavePayloadSchema.default({}),
-  }),
-  z.object({
-    v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
-    type: z.literal("LEAVE_QUEUE"),
-    requestId: z.string().optional(),
-    payload: z.any().optional().default({}),
   }),
   z.object({
     v: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),

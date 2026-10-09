@@ -155,6 +155,10 @@ CREATE TABLE IF NOT EXISTS \`friends\` (
 );
 
 CREATE INDEX IF NOT EXISTS \`friends_user_friend_idx\` ON \`friends\` (\`user_id\`, \`friend_id\`);
+CREATE UNIQUE INDEX IF NOT EXISTS \`friends_canonical_pair_idx\` ON \`friends\` (
+	CASE WHEN \`user_id\` < \`friend_id\` THEN \`user_id\` ELSE \`friend_id\` END,
+	CASE WHEN \`user_id\` < \`friend_id\` THEN \`friend_id\` ELSE \`user_id\` END
+);
 
 CREATE TABLE IF NOT EXISTS \`challenges\` (
 	\`id\` text PRIMARY KEY NOT NULL,
@@ -173,6 +177,23 @@ CREATE TABLE IF NOT EXISTS \`challenges\` (
 );
 
 CREATE INDEX IF NOT EXISTS \`challenges_status_expires_idx\` ON \`challenges\` (\`status\`, \`expires_at\`);
+
+CREATE TABLE IF NOT EXISTS \`rating_history\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`user_id\` text NOT NULL,
+	\`game_id\` text NOT NULL,
+	\`category\` text NOT NULL,
+	\`rating_before\` real NOT NULL,
+	\`rating_after\` real NOT NULL,
+	\`rating_change\` real NOT NULL,
+	\`rd_before\` real,
+	\`rd_after\` real,
+	\`recorded_at\` integer NOT NULL,
+	FOREIGN KEY (\`user_id\`) REFERENCES \`user\`(\`id\`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (\`game_id\`) REFERENCES \`games\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS \`rating_history_user_idx\` ON \`rating_history\` (\`user_id\`, \`recorded_at\`);
 `;
 
 export async function applyTestSchema(db: D1Database): Promise<void> {

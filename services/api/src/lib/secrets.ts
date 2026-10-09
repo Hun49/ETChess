@@ -45,6 +45,7 @@ export function validateEnvironment(env: Env): EnvValidationResult {
   if (!env.DB) missing.push("DB");
   if (!env.GAME_SESSION_DO) missing.push("GAME_SESSION_DO");
   if (!env.MATCHMAKER_DO) missing.push("MATCHMAKER_DO");
+  if (!env.USER_PRESENCE_DO) missing.push("USER_PRESENCE_DO");
 
   if (!env.BETTER_AUTH_SECRET) {
     missing.push("BETTER_AUTH_SECRET");

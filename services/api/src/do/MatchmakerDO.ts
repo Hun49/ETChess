@@ -45,12 +45,14 @@ interface UserSocketAttachment {
   windowStartMs?: number;
   messageCountInWindow?: number;
   lastHeartbeatAt?: number;
+  queueActionSeq?: number;
 }
 
 export class MatchmakerDO extends DurableObject<Env> {
   private queue: QueuedPlayer[] | null = null;
   private replayGuard: TicketReplayGuard;
   private activePlayerGames: Map<string, string> | null = null; // userId -> gameId
+  private simulateInitFailure = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -246,6 +248,9 @@ export class MatchmakerDO extends DurableObject<Env> {
 
     // 1. Pre-initialize GameSessionDO
     try {
+      if (this.simulateInitFailure) {
+        throw new Error("Simulated Init Failure (B4-MM-11)");
+      }
       const ns = this.env.GAME_SESSION_DO;
       const sessionStub = ns.get(ns.idFromName(gameId));
       const initRes = await sessionStub.fetch("http://internal/init", {
@@ -273,6 +278,12 @@ export class MatchmakerDO extends DurableObject<Env> {
       }
     } catch (err) {
       console.error("Failed to pre-initialize GameSessionDO:", err);
+      // B4-MM-11: Match Creation Atomicity — restore both players to queue in original priority order
+      const q = await this.loadQueue();
+      q.unshift(p2);
+      q.unshift(p1);
+      await this.persistQueue();
+
       this.sendToUser(p1.userId, {
         v: PROTOCOL_VERSION,
         type: "ERROR",
@@ -292,6 +303,28 @@ export class MatchmakerDO extends DurableObject<Env> {
         },
       });
       return;
+    }
+
+    // Register active game lock in UserPresenceDO for both players (B4-PRES-02, INV-01)
+    if (this.env.USER_PRESENCE_DO) {
+      try {
+        const up1 = this.env.USER_PRESENCE_DO.get(this.env.USER_PRESENCE_DO.idFromName(p1.userId));
+        const up2 = this.env.USER_PRESENCE_DO.get(this.env.USER_PRESENCE_DO.idFromName(p2.userId));
+        await Promise.all([
+          up1.fetch("http://internal/claim-live-game", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ gameId }),
+          }),
+          up2.fetch("http://internal/claim-live-game", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ gameId }),
+          }),
+        ]);
+      } catch (err) {
+        console.error("Failed to claim live game in UserPresenceDO:", err);
+      }
     }
 
     // Register active game lock for both players (H10)
@@ -413,6 +446,23 @@ export class MatchmakerDO extends DurableObject<Env> {
     if (url.pathname.endsWith("/clear") && request.method === "POST") {
       this.queue = [];
       const activeGames = await this.loadActivePlayerGames();
+      if (this.env.USER_PRESENCE_DO) {
+        for (const [userId, gameId] of activeGames.entries()) {
+          try {
+            const up = this.env.USER_PRESENCE_DO.get(this.env.USER_PRESENCE_DO.idFromName(userId));
+            await up.fetch("http://internal/release-live-game", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ gameId }),
+            });
+            await up.fetch("http://internal/release-queue", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            });
+          } catch {}
+        }
+      }
       activeGames.clear();
       await this.persistActivePlayerGames();
       await this.persistQueue();
@@ -444,9 +494,26 @@ export class MatchmakerDO extends DurableObject<Env> {
           const stateRes = await sessionDO.fetch("http://internal/state");
           if (stateRes.ok) {
             const sessionState = (await stateRes.json()) as { status: string };
-            if (sessionState.status === "finished" || sessionState.status === "finalized") {
+            if (
+              sessionState.status === "ended" ||
+              sessionState.status === "finished" ||
+              sessionState.status === "finalized" ||
+              sessionState.status === "aborted"
+            ) {
               activeGames.delete(targetUserId);
               await this.persistActivePlayerGames();
+              if (this.env.USER_PRESENCE_DO) {
+                try {
+                  const up = this.env.USER_PRESENCE_DO.get(
+                    this.env.USER_PRESENCE_DO.idFromName(targetUserId),
+                  );
+                  await up.fetch("http://internal/release-live-game", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ gameId }),
+                  });
+                } catch {}
+              }
               gameId = null;
             }
           }
@@ -484,15 +551,49 @@ export class MatchmakerDO extends DurableObject<Env> {
       const activeGames = await this.loadActivePlayerGames();
       if (body.userId) {
         activeGames.delete(body.userId);
+        if (this.env.USER_PRESENCE_DO) {
+          try {
+            const up = this.env.USER_PRESENCE_DO.get(
+              this.env.USER_PRESENCE_DO.idFromName(body.userId),
+            );
+            await up.fetch("http://internal/release-live-game", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            });
+          } catch {}
+        }
       }
       if (body.gameId) {
         for (const [uid, gid] of activeGames.entries()) {
           if (gid === body.gameId) {
             activeGames.delete(uid);
+            if (this.env.USER_PRESENCE_DO) {
+              try {
+                const up = this.env.USER_PRESENCE_DO.get(this.env.USER_PRESENCE_DO.idFromName(uid));
+                await up.fetch("http://internal/release-live-game", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ gameId: body.gameId }),
+                });
+              } catch {}
+            }
           }
         }
       }
       if (!body.userId && !body.gameId) {
+        if (this.env.USER_PRESENCE_DO) {
+          for (const [uid, gid] of activeGames.entries()) {
+            try {
+              const up = this.env.USER_PRESENCE_DO.get(this.env.USER_PRESENCE_DO.idFromName(uid));
+              await up.fetch("http://internal/release-live-game", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gameId: gid }),
+              });
+            } catch {}
+          }
+        }
         activeGames.clear();
       }
       await this.persistActivePlayerGames();
@@ -505,7 +606,26 @@ export class MatchmakerDO extends DurableObject<Env> {
       const activeGames = await this.loadActivePlayerGames();
       activeGames.set(body.userId, body.gameId);
       await this.persistActivePlayerGames();
+      if (this.env.USER_PRESENCE_DO) {
+        try {
+          const up = this.env.USER_PRESENCE_DO.get(
+            this.env.USER_PRESENCE_DO.idFromName(body.userId),
+          );
+          await up.fetch("http://internal/claim-live-game", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ gameId: body.gameId }),
+          });
+        } catch {}
+      }
       return Response.json({ success: true });
+    }
+
+    // 9. Test Helper: Simulate Init Failure in GameSessionDO (for B4-MM-11)
+    if (url.pathname.endsWith("/test-simulate-init-failure") && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as { enabled?: boolean };
+      this.simulateInitFailure = body.enabled ?? true;
+      return Response.json({ success: true, simulateInitFailure: this.simulateInitFailure });
     }
 
     return new Response("Not Found", { status: 404 });
@@ -577,16 +697,25 @@ export class MatchmakerDO extends DurableObject<Env> {
 
     // 2. Handle User Channel Frames
     switch (frame.type) {
-      case "QUEUE_JOIN":
-      case "JOIN_QUEUE": {
+      case "QUEUE_JOIN": {
+        const mySeq = (attachment.queueActionSeq ?? 0) + 1;
+        attachment.queueActionSeq = mySeq;
+        ws.serializeAttachment(attachment);
+
         const payload = frame.payload;
-        const timeControlId = (
-          "timeControlId" in payload
-            ? payload.timeControlId
-            : "timeControl" in payload
-              ? payload.timeControl
-              : "3+2"
-        ) as TimeControlKey;
+        if (!payload.timeControlId || !(payload.timeControlId in TIME_CONTROLS)) {
+          this.send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ERROR",
+            serverTime: Date.now(),
+            payload: {
+              code: "INVALID_TIME_CONTROL",
+              message: `Invalid or unsupported time control preset: ${payload.timeControlId}`,
+            },
+          });
+          return;
+        }
+        const timeControlId = payload.timeControlId as TimeControlKey;
 
         const rated = !!payload.rated;
 
@@ -643,6 +772,47 @@ export class MatchmakerDO extends DurableObject<Env> {
           }
           activeGames.delete(attachment.userId);
           await this.persistActivePlayerGames();
+          if (this.env.USER_PRESENCE_DO) {
+            try {
+              const up = this.env.USER_PRESENCE_DO.get(
+                this.env.USER_PRESENCE_DO.idFromName(attachment.userId),
+              );
+              await up.fetch("http://internal/release-live-game", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gameId: existingGameId }),
+              });
+            } catch {}
+          }
+        }
+
+        // Coordinate queue membership with UserPresenceDO (INV-01, INV-02)
+        if (this.env.USER_PRESENCE_DO && attachment.userId) {
+          try {
+            const upStub = this.env.USER_PRESENCE_DO.get(
+              this.env.USER_PRESENCE_DO.idFromName(attachment.userId),
+            );
+            const poolKey = `${timeControlId}_${rated ? "rated" : "unrated"}`;
+            const claimRes = await upStub.fetch("http://internal/claim-queue", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ poolKey }),
+            });
+            if (claimRes.status === 409) {
+              this.send(ws, {
+                v: PROTOCOL_VERSION,
+                type: "ERROR",
+                serverTime: Date.now(),
+                payload: {
+                  code: "ALREADY_IN_GAME",
+                  message: "You already have an active game session in progress.",
+                },
+              });
+              return;
+            }
+          } catch {
+            // Fail open if UserPresenceDO unreachable
+          }
         }
 
         const category = getRatingCategory(timeControlId);
@@ -680,6 +850,19 @@ export class MatchmakerDO extends DurableObject<Env> {
           joinedAt: now,
           lastStatusSentAt: now,
         };
+
+        const currentAtt = ws.deserializeAttachment() as UserSocketAttachment | null;
+        if (!currentAtt || currentAtt.queueActionSeq !== mySeq) {
+          if (this.env.USER_PRESENCE_DO && attachment.userId) {
+            try {
+              const upStub = this.env.USER_PRESENCE_DO.get(
+                this.env.USER_PRESENCE_DO.idFromName(attachment.userId),
+              );
+              await upStub.fetch("http://internal/release-queue", { method: "POST" });
+            } catch {}
+          }
+          break;
+        }
 
         this.queue.push(queuedPlayer);
         await this.persistQueue();
@@ -719,11 +902,22 @@ export class MatchmakerDO extends DurableObject<Env> {
         break;
       }
 
-      case "QUEUE_LEAVE":
-      case "LEAVE_QUEUE": {
+      case "QUEUE_LEAVE": {
+        attachment.queueActionSeq = (attachment.queueActionSeq ?? 0) + 1;
+        ws.serializeAttachment(attachment);
+
         const queue = await this.loadQueue();
         this.queue = queue.filter((p) => p.userId !== attachment.userId);
         await this.persistQueue();
+
+        if (this.env.USER_PRESENCE_DO && attachment.userId) {
+          try {
+            const upStub = this.env.USER_PRESENCE_DO.get(
+              this.env.USER_PRESENCE_DO.idFromName(attachment.userId),
+            );
+            await upStub.fetch("http://internal/release-queue", { method: "POST" });
+          } catch {}
+        }
 
         this.send(ws, {
           v: PROTOCOL_VERSION,

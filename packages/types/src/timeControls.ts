@@ -2,6 +2,8 @@ export type RatingCategory = "bullet" | "blitz" | "rapid" | "classical";
 
 export type TimeControlKey =
   | "1+0"
+  | "1+1"
+  | "2+1"
   | "2+0"
   | "3+0"
   | "3+2"
@@ -23,12 +25,12 @@ export interface TimeControlConfig {
 }
 
 /**
- * Authoritative category classification:
+ * Authoritative category classification (SRS RATE-12 & Section 8.2):
  * Estimated duration = initialSeconds + 40 * incrementSeconds
  * < 180s: bullet
  * < 480s: blitz
- * < 1500s: rapid
- * >= 1500s: classical
+ * < 3600s: rapid (includes 10+0, 10+5, 15+10, 30+0)
+ * >= 3600s: classical
  */
 export function classifyTimeControl(
   initialSeconds: number,
@@ -41,7 +43,7 @@ export function classifyTimeControl(
   if (estimatedDuration < 480) {
     return "blitz";
   }
-  if (estimatedDuration < 1500) {
+  if (estimatedDuration < 3600) {
     return "rapid";
   }
   return "classical";
@@ -54,6 +56,20 @@ export const TIME_CONTROLS: Record<TimeControlKey, TimeControlConfig> = {
     incrementSeconds: 0,
     category: classifyTimeControl(60, 0),
     displayName: "1 min",
+  },
+  "1+1": {
+    key: "1+1",
+    initialSeconds: 60,
+    incrementSeconds: 1,
+    category: classifyTimeControl(60, 1),
+    displayName: "1 | 1",
+  },
+  "2+1": {
+    key: "2+1",
+    initialSeconds: 120,
+    incrementSeconds: 1,
+    category: classifyTimeControl(120, 1),
+    displayName: "2 | 1",
   },
   "2+0": {
     key: "2+0",
