@@ -14,9 +14,9 @@
     "ci": "pnpm run lint && pnpm run check-types && pnpm test && pnpm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "1.9.4",
-    "turbo": "^2.4.4",
-    "typescript": "^5.7.3"
+    "@biomejs/biome": "2.5.15",
+    "turbo": "^2.11.7",
+    "typescript": "^7.0.2"
   },
   "packageManager": "pnpm@11.21.0",
   "engines": {
