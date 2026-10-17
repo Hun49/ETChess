@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  Bot,
   Clock,
   Cpu,
   Flame,
@@ -9,11 +10,14 @@ import {
   Sparkles,
   Swords,
   UserCheck,
+  UserPlus,
   Zap,
 } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 import { api, useSession } from "../lib/api";
+import { GUEST_LIMITS, REGISTERED_LIMITS, getQuotaRemaining } from "../lib/quota";
 import { useGameStore } from "../store/gameStore";
 
 interface HomeRecentGame {
@@ -28,7 +32,7 @@ interface HomeRecentGame {
 }
 
 export const HomeView: React.FC = () => {
-  const { setActiveView, openModal, isGuest, guestSkillLevel } = useGameStore();
+  const { setActiveView, openModal, isGuest, guestSkillLevel, guestName } = useGameStore();
   const { data: session } = useSession();
 
   const [recentGames, setRecentGames] = useState<HomeRecentGame[]>([]);
@@ -36,6 +40,9 @@ export const HomeView: React.FC = () => {
     null,
   );
   const [loading, setLoading] = useState(false);
+
+  // Quota counts for today
+  const quota = getQuotaRemaining(isGuest, session?.user?.id);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -83,30 +90,103 @@ export const HomeView: React.FC = () => {
   }, [session?.user?.id]);
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* 1. Clean Hero Card */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0a181c] via-[#0d2227] to-[#081518] border border-[#162e33] p-6 md:p-10 shadow-xl">
+    <div className="space-y-6 pb-12 overflow-y-auto px-4 md:px-8 py-6">
+      {/* 1. Hero Card */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#0a181c] via-[#0d2227] to-[#081518] border border-[#162e33] p-6 md:p-10 shadow-xl">
         <div className="relative z-10 max-w-xl space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-[#00e699]/15 border border-[#00e699]/30 px-3 py-1 text-[11px] font-bold text-[#00e699] uppercase tracking-wider">
+              {isGuest ? "Guest Access" : "Welcome Back"}
+            </span>
+            {!isGuest && session?.user && (
+              <div className="flex items-center gap-1.5 text-xs text-neutral-300 font-semibold">
+                <span>{session.user.name}</span>
+                <VerifiedBadge size="sm" />
+              </div>
+            )}
+          </div>
+
           <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white leading-tight">
-            Play. Learn. Improve.
+            {isGuest ? "Play Free Chess Instantly." : "Play. Learn. Improve."}
           </h1>
-          <p className="text-sm md:text-base text-[#8ba3a8] font-normal">
-            The modern chess experience for everyone.
+
+          <p className="text-sm md:text-base text-[#8ba3a8] font-normal leading-relaxed">
+            {isGuest
+              ? "Enjoy casual unrated matchmaking against other guests and practice against computer bots."
+              : "Compete in rated Glicko-2 matches, challenge friends, and review your moves with engine analysis."}
           </p>
-          <div className="pt-2">
+
+          {/* Quota Badges for Guest */}
+          {isGuest && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="rounded-lg bg-[#0e1e22] border border-[#162e33] px-2.5 py-1 text-xs text-neutral-300 font-medium">
+                Online: <strong className="text-[#00e699]">{quota.onlineGamesRemaining}</strong>/
+                {GUEST_LIMITS.maxOnlineGames} daily
+              </span>
+              <span className="rounded-lg bg-[#0e1e22] border border-[#162e33] px-2.5 py-1 text-xs text-neutral-300 font-medium">
+                Bots: <strong className="text-[#00e699]">{quota.botGamesRemaining}</strong>/
+                {GUEST_LIMITS.maxBotGames} daily
+              </span>
+              <span className="rounded-lg bg-[#0e1e22] border border-[#162e33] px-2.5 py-1 text-xs text-neutral-300 font-medium">
+                Analysis: <strong className="text-[#00e699]">{quota.analysesRemaining}</strong>/
+                {GUEST_LIMITS.maxAnalyses} daily
+              </span>
+            </div>
+          )}
+
+          {/* CTAs */}
+          <div className="pt-2 flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={() => setActiveView("play_online")}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#00e699] px-6 py-3 text-sm font-bold text-neutral-950 shadow-lg shadow-[#00e699]/20 hover:bg-[#00e699]/90 transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#00e699] px-6 py-3 text-sm font-bold text-neutral-950 shadow-lg shadow-[#00e699]/20 hover:bg-[#00c885] transition-all cursor-pointer"
             >
-              <span>Play Now</span>
+              <span>{isGuest ? "Play Online as Guest" : "Play Online"}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
+
+            {isGuest && (
+              <button
+                type="button"
+                onClick={() => openModal("auth")}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#00e699]/40 bg-[#00e699]/10 px-5 py-3 text-sm font-bold text-[#00e699] hover:bg-[#00e699]/20 transition-all cursor-pointer"
+              >
+                <UserPlus className="h-4 w-4" />
+                <span>Create Free Account</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* 2. 4 Play Mode Cards */}
+      {/* 2. Guest Sign-in Promotion Nudge ("Ad") */}
+      {isGuest && (
+        <div className="rounded-2xl border border-[#00e699]/30 bg-gradient-to-r from-[#00e699]/10 via-[#0a2024] to-[#0b171a] p-5 shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1 max-w-xl">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-[#00e699]" />
+              <span className="text-xs font-black uppercase tracking-wider text-[#00e699]">
+                Unlock Full ET-Chess Experience
+              </span>
+            </div>
+            <p className="text-xs text-[#cbd5e1] leading-relaxed">
+              Create an account with Google or GitHub to get <strong>unlimited online play</strong>,{" "}
+              <strong>friend challenges</strong>, <strong>10 daily game analyses</strong>, starting
+              ELO rating, and a <strong>verified player badge</strong>.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openModal("auth")}
+            className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-[#00e699] px-5 py-2.5 text-xs font-black text-neutral-950 hover:bg-[#00c885] transition-all cursor-pointer shadow-md shadow-[#00e699]/20"
+          >
+            <span>Sign In with Google / GitHub</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* 3. 4 Play Mode Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Play Online */}
         <button
@@ -125,7 +205,9 @@ export const HomeView: React.FC = () => {
               Play Online
             </div>
             <div className="text-xs text-[#8ba3a8] mt-0.5">
-              {isGuest ? `Match guests (${guestSkillLevel})` : "Find an opponent"}
+              {isGuest
+                ? `${quota.onlineGamesRemaining} of ${GUEST_LIMITS.maxOnlineGames} games remaining`
+                : "Unlimited rated matchmaking"}
             </div>
           </div>
         </button>
@@ -135,7 +217,7 @@ export const HomeView: React.FC = () => {
           type="button"
           onClick={() => {
             if (isGuest) {
-              setActiveView("play_friend");
+              openModal("auth");
             } else {
               setActiveView("play_friend");
             }
@@ -159,7 +241,9 @@ export const HomeView: React.FC = () => {
                 </span>
               )}
             </div>
-            <div className="text-xs text-[#8ba3a8] mt-0.5">Challenge your friends</div>
+            <div className="text-xs text-[#8ba3a8] mt-0.5">
+              {isGuest ? "Sign in to send challenge links" : "Challenge friends with link"}
+            </div>
           </div>
         </button>
 
@@ -179,7 +263,11 @@ export const HomeView: React.FC = () => {
             <div className="text-sm font-bold text-white group-hover:text-[#00e699] transition-colors">
               Play Computer
             </div>
-            <div className="text-xs text-[#8ba3a8] mt-0.5">Practice & improve</div>
+            <div className="text-xs text-[#8ba3a8] mt-0.5">
+              {isGuest
+                ? `${quota.botGamesRemaining} of ${GUEST_LIMITS.maxBotGames} bot games remaining`
+                : "Unlimited Stockfish practice"}
+            </div>
           </div>
         </button>
 
@@ -204,7 +292,7 @@ export const HomeView: React.FC = () => {
         </button>
       </div>
 
-      {/* 3. Bottom Grid: Recent Games & Your Ratings */}
+      {/* 4. Bottom Grid: Match History & Ratings */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Recent Games */}
         <div className="lg:col-span-7 rounded-2xl border border-[#14282c] bg-[#0b171a] p-5">
@@ -226,8 +314,8 @@ export const HomeView: React.FC = () => {
               {recentGames.map((game) => {
                 const isWhite = game.whitePlayerId === session?.user?.id;
                 const opponentName = isWhite
-                  ? game.blackPlayer?.name || "Anonymous Opponent"
-                  : game.whitePlayer?.name || "Anonymous Opponent";
+                  ? game.blackPlayer?.name || "Opponent"
+                  : game.whitePlayer?.name || "Opponent";
                 const isWinner =
                   (game.result === "1-0" && isWhite) || (game.result === "0-1" && !isWhite);
                 const isDraw = game.result === "1/2-1/2";
@@ -273,8 +361,8 @@ export const HomeView: React.FC = () => {
               <p className="text-xs font-bold text-white">No games played yet</p>
               <p className="text-[11px] text-[#587277] max-w-xs mt-1">
                 {isGuest
-                  ? "Guest sessions play unrated casual games. Start a match or create an account to save match history!"
-                  : "Your database match history is clean. Play your first match to record stats!"}
+                  ? "Guest sessions play unrated casual games. Create an account to permanently record your match history!"
+                  : "Play your first match to start recording your game history!"}
               </p>
               <button
                 type="button"
@@ -288,10 +376,12 @@ export const HomeView: React.FC = () => {
           )}
         </div>
 
-        {/* Your Ratings */}
+        {/* Your Ratings / Quota Meter */}
         <div className="lg:col-span-5 rounded-2xl border border-[#14282c] bg-[#0b171a] p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-bold text-white">Your Ratings</h2>
+            <h2 className="text-sm font-bold text-white">
+              {isGuest ? "Guest Daily Passes" : "Your Ratings"}
+            </h2>
             {!isGuest && (
               <button
                 type="button"
@@ -304,23 +394,79 @@ export const HomeView: React.FC = () => {
           </div>
 
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-[#0e1e22] border border-[#14282c] space-y-3">
+            <div className="p-4 rounded-xl bg-[#0e1e22] border border-[#14282c] space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-white">Guest Session</span>
                 <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-400 capitalize">
-                  {guestSkillLevel} Tier
+                  {guestSkillLevel} Tier (Unrated)
                 </span>
               </div>
+
+              {/* Progress meters */}
+              <div className="space-y-2.5">
+                <div>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-[#8ba3a8]">Online Matchmaking</span>
+                    <span className="font-mono text-white font-bold">
+                      {quota.onlineGamesRemaining} / {GUEST_LIMITS.maxOnlineGames} left
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-[#14282c] overflow-hidden">
+                    <div
+                      className="h-full bg-[#00e699] transition-all"
+                      style={{
+                        width: `${(quota.onlineGamesRemaining / GUEST_LIMITS.maxOnlineGames) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-[#8ba3a8]">Bot Practice</span>
+                    <span className="font-mono text-white font-bold">
+                      {quota.botGamesRemaining} / {GUEST_LIMITS.maxBotGames} left
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-[#14282c] overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 transition-all"
+                      style={{
+                        width: `${(quota.botGamesRemaining / GUEST_LIMITS.maxBotGames) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-[#8ba3a8]">Game Analysis</span>
+                    <span className="font-mono text-white font-bold">
+                      {quota.analysesRemaining} / {GUEST_LIMITS.maxAnalyses} left
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-[#14282c] overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400 transition-all"
+                      style={{
+                        width: `${(quota.analysesRemaining / GUEST_LIMITS.maxAnalyses) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <p className="text-[11px] text-[#8ba3a8] leading-relaxed">
-                Guest accounts play unrated casual matches. Create a free account to track your ELO
-                rating across Bullet, Blitz, and Rapid!
+                Guest games are unrated. Create an account to unlock unlimited games, friend
+                invites, and your calibrated starting ELO rating!
               </p>
+
               <button
                 type="button"
                 onClick={() => openModal("auth")}
                 className="w-full py-2.5 rounded-xl bg-[#00e699] text-[#081214] font-bold text-xs hover:bg-[#00c885] transition-colors cursor-pointer shadow-md shadow-[#00e699]/10"
               >
-                Sign Up to Get Rated
+                Sign In to Unlock Unlimited
               </button>
             </div>
           ) : (
@@ -371,6 +517,14 @@ export const HomeView: React.FC = () => {
                   </div>
                 </div>
                 <span className="text-xs font-bold text-[#00e699]">Active</span>
+              </div>
+
+              {/* Daily Analyses Remaining for Registered */}
+              <div className="p-3 rounded-xl bg-[#081214] border border-[#162e33] flex items-center justify-between text-xs">
+                <span className="text-[#8ba3a8]">Analyses Today:</span>
+                <span className="font-bold text-[#00e699] font-mono">
+                  {quota.analysesRemaining} / {REGISTERED_LIMITS.maxAnalyses} remaining
+                </span>
               </div>
             </div>
           )}

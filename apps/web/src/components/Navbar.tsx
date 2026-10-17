@@ -42,9 +42,6 @@ export const Navbar: React.FC = () => {
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold tracking-tight text-lg text-white">ET Chess</span>
-                <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
-                  PRO
-                </span>
               </div>
               <p className="text-[11px] text-neutral-400 font-medium hidden sm:block">
                 Ultra-Low Latency DO Chess

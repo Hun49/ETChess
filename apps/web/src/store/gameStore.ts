@@ -1,5 +1,6 @@
 import { type BotHandle, createBot } from "@etchess/bot-engine";
 import {
+  Chess,
   STARTING_FEN,
   calculateClockAfterMove,
   getCurrentClockDisplay,
@@ -12,9 +13,10 @@ import {
   parseServerGameFrame,
   parseServerMatchmakerFrame,
 } from "@etchess/realtime-protocol";
-import type { BotTier, TimeControlKey } from "@etchess/types";
+import { BOT_TIERS, type BotTier, type TimeControlKey } from "@etchess/types";
 import { create } from "zustand";
-import { LocalUciEngineTransport } from "../lib/localUciEngine";
+import { LocalUciEngineTransport, evaluatePosition } from "../lib/localUciEngine";
+import { canPlayBot, canPlayOnline, incrementBotGame, incrementOnlineGame } from "../lib/quota";
 import { sound } from "../lib/sound";
 
 export type GameMode = "idle" | "matchmaking" | "online" | "bot" | "pass_and_play";
@@ -115,6 +117,7 @@ export interface GameState {
   timeControl: TimeControlKey;
   rated: boolean;
   botTier: BotTier;
+  isBotThinking: boolean;
 
   // Board & Move State
   fen: string;
@@ -171,12 +174,31 @@ export interface GameState {
 
   // Sound & Modals
   isSoundMuted: boolean;
-  activeModal: "auth" | "profile" | "play" | "leaderboard" | "game_over" | "onboarding" | null;
+  activeModal:
+    | "auth"
+    | "profile"
+    | "play"
+    | "leaderboard"
+    | "game_over"
+    | "onboarding"
+    | "limit_reached"
+    | "edit_profile"
+    | null;
+  limitModalType: "online" | "bot" | "analysis";
 
   // Actions
   openModal: (
-    modal: "auth" | "profile" | "play" | "leaderboard" | "game_over" | "onboarding",
+    modal:
+      | "auth"
+      | "profile"
+      | "play"
+      | "leaderboard"
+      | "game_over"
+      | "onboarding"
+      | "limit_reached"
+      | "edit_profile",
   ) => void;
+  openLimitModal: (type: "online" | "bot" | "analysis") => void;
   closeModal: () => void;
   toggleSound: () => void;
   setBoardTheme: (theme: BoardTheme) => void;
@@ -200,6 +222,7 @@ export interface GameState {
   }) => string;
   cancelFriendChallenge: () => void;
   makeMove: (from: string, to: string, promotion?: "q" | "r" | "b" | "n") => boolean;
+  takebackBotMove: () => boolean;
   resign: () => void;
   offerDraw: () => void;
   respondDraw: (accept: boolean) => void;
@@ -312,6 +335,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   timeControl: "3+2",
   rated: true,
   botTier: "intermediate",
+  isBotThinking: false,
 
   fen: STARTING_FEN,
   turn: "w",
@@ -368,8 +392,10 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   isSoundMuted: sound.isSoundMuted(),
   activeModal: null,
+  limitModalType: "online",
 
   openModal: (modal) => set({ activeModal: modal }),
+  openLimitModal: (type) => set({ activeModal: "limit_reached", limitModalType: type }),
   closeModal: () => set({ activeModal: null }),
 
   toggleSound: () => {
@@ -432,6 +458,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastMove: null,
       isCheck: false,
       isClockRunning: false,
+      isBotThinking: false,
       activeModal: null,
       chatMessages: [],
     });
@@ -440,7 +467,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   // 1. Pass and Play (Local 2 Players)
   startPassAndPlay: (tc = "10+0") => {
     get().resetToIdle();
-    const config = TC_CONFIG[tc];
+    const config = TC_CONFIG[tc] ?? TC_CONFIG["10+0"] ?? { initialMs: 600000, incMs: 0 };
 
     set({
       activeView: "game",
@@ -469,8 +496,15 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   // 2. Play Against Local Bot (Stockfish / UCI Engine)
   startBotGame: (tier = "intermediate", selectedColor = "white", tc = "5+0") => {
+    const isGuest = get().isGuest;
+    if (isGuest && !canPlayBot(true)) {
+      get().openLimitModal("bot");
+      return;
+    }
+    incrementBotGame(isGuest);
+
     get().resetToIdle();
-    const config = TC_CONFIG[tc];
+    const config = TC_CONFIG[tc] ?? TC_CONFIG["5+0"] ?? { initialMs: 300000, incMs: 0 };
 
     const actualColor: "white" | "black" =
       selectedColor === "random" ? (Math.random() < 0.5 ? "white" : "black") : selectedColor;
@@ -479,8 +513,19 @@ export const useGameStore = create<GameState>((set, get) => ({
     const bot = createBot(tier, botTransport);
     activeBot = bot;
 
-    const botName = `ET Bot (${tier.charAt(0).toUpperCase() + tier.slice(1)})`;
-    const botRating = tier === "beginner" ? 600 : tier === "intermediate" ? 1400 : 2000;
+    const botConfig = BOT_TIERS[tier];
+    const botName = botConfig
+      ? `${botConfig.name} (Bot)`
+      : `ET Bot (${tier.charAt(0).toUpperCase() + tier.slice(1)})`;
+    const botRating = botConfig
+      ? botConfig.elo
+      : tier === "beginner"
+        ? 800
+        : tier === "intermediate"
+          ? 1400
+          : 1900;
+    const playerName = isGuest ? get().guestName : "You";
+    const playerRating = isGuest ? 0 : 1000;
 
     set({
       activeView: "game",
@@ -491,11 +536,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       boardOrientation: actualColor,
       whitePlayer:
         actualColor === "white"
-          ? { name: "You", rating: 1500 }
+          ? { name: playerName, rating: playerRating }
           : { name: botName, rating: botRating },
       blackPlayer:
         actualColor === "black"
-          ? { name: "You", rating: 1500 }
+          ? { name: playerName, rating: playerRating }
           : { name: botName, rating: botRating },
       fen: STARTING_FEN,
       turn: "w",
@@ -508,13 +553,19 @@ export const useGameStore = create<GameState>((set, get) => ({
       moves: [],
       lastMove: null,
       isCheck: false,
+      isBotThinking: false,
       activeModal: null,
     });
 
     bot.init().then(() => {
+      // Guard against component unmount or game reset while initializing
+      if (get().mode !== "bot" || activeBot !== bot) return;
+
       // If bot is playing White, trigger first move
       if (actualColor === "black") {
+        set({ isBotThinking: true });
         setTimeout(() => {
+          if (get().mode !== "bot" || activeBot !== bot) return;
           bot.requestMove(STARTING_FEN, (uciMove) => {
             handleBotMoveReceived(uciMove, set, get);
           });
@@ -527,6 +578,12 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   // 3. Online Matchmaking via MatchmakerDO WebSocket
   joinMatchmaking: (tc: TimeControlKey, rated: boolean) => {
+    const isGuest = get().isGuest;
+    if (isGuest && !canPlayOnline(true)) {
+      get().openLimitModal("online");
+      return;
+    }
+
     get().resetToIdle();
 
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -656,6 +713,21 @@ export const useGameStore = create<GameState>((set, get) => ({
       now,
     );
 
+    if (clockResult.flagged) {
+      sound.playGameOver();
+      const winner = turn === "w" ? "Black" : "White";
+      set({
+        status: "ended",
+        result: turn === "w" ? "0-1" : "1-0",
+        termination: `Time out - ${winner} wins on time`,
+        whiteMs: clockResult.whiteMs,
+        blackMs: clockResult.blackMs,
+        isClockRunning: false,
+        activeModal: "game_over",
+      });
+      return false;
+    }
+
     const nextMoves = [...get().moves, validation.san];
     const isOver = validation.snapshot.isGameOver;
 
@@ -686,6 +758,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       blackMs: clockResult.blackMs,
       lastMoveTimestamp: now,
       status: isOver ? "ended" : "active",
+      isClockRunning: !isOver,
       result,
       termination,
       activeModal: isOver ? "game_over" : get().activeModal,
@@ -708,12 +781,52 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     // If bot mode and game is still active, request bot reply
     if (mode === "bot" && !isOver && activeBot) {
+      set({ isBotThinking: true });
       setTimeout(() => {
+        if (get().mode !== "bot" || get().status !== "active") return;
         activeBot?.requestMove(validation.snapshot.fen, (botBestMove) => {
           handleBotMoveReceived(botBestMove, set, get);
         });
       }, 300);
     }
+
+    return true;
+  },
+
+  takebackBotMove: () => {
+    const { mode, moves, playerColor, status, isBotThinking } = get();
+    if (mode !== "bot" || status !== "active" || moves.length === 0) return false;
+
+    // Stop active bot calculation if bot is thinking
+    if (activeBot) {
+      activeBot.stop();
+    }
+
+    // If bot is currently thinking, user just made 1 move -> rewind 1 ply back to user
+    // Otherwise, if it's the user's turn (bot has moved) -> rewind 2 plies
+    // Otherwise (bot's turn) -> rewind 1 ply
+    const isUserTurn = get().turn === (playerColor === "white" ? "w" : "b");
+    const pliesToRewind = isBotThinking ? 1 : isUserTurn ? Math.min(moves.length, 2) : 1;
+    const remainingMoves = moves.slice(0, moves.length - pliesToRewind);
+
+    const chess = new Chess();
+    let lastMoveObj: { from: string; to: string } | null = null;
+    for (const m of remainingMoves) {
+      const res = chess.move(m);
+      if (res) {
+        lastMoveObj = { from: res.from, to: res.to };
+      }
+    }
+
+    set({
+      fen: chess.fen(),
+      turn: chess.turn(),
+      moves: remainingMoves,
+      lastMove: lastMoveObj,
+      isCheck: isInCheck(chess.fen()),
+      isBotThinking: false,
+      lastMoveTimestamp: Date.now(),
+    });
 
     return true;
   },
@@ -731,17 +844,54 @@ export const useGameStore = create<GameState>((set, get) => ({
         status: "ended",
         result,
         termination: `${playerColor === "white" ? "White" : "Black"} resigned`,
+        isClockRunning: false,
         activeModal: "game_over",
       });
     }
   },
 
   offerDraw: () => {
-    const { mode, playerColor } = get();
+    const { mode, playerColor, fen, moves, botTier, status } = get();
+    if (status !== "active") return;
+
     if (mode === "online" && activeGameWs) {
       const frame: ClientGameFrame = { type: "DRAW_OFFER", payload: {} };
       activeGameWs.send(JSON.stringify(frame));
       set({ drawOfferedBy: playerColor });
+    } else if (mode === "bot") {
+      const chess = new Chess(fen);
+      const evalScore = evaluatePosition(chess);
+      const isBotWhite = playerColor !== "white";
+      const botEval = isBotWhite ? evalScore : -evalScore;
+
+      // Bot accepts draw if at least 20 plies (10 moves each) have been played
+      // and bot evaluation is <= 50 centipawns (not clearly winning)
+      if (moves.length >= 20 && botEval <= 50) {
+        sound.playGameOver();
+        set({
+          status: "ended",
+          result: "1/2-1/2",
+          termination: "Draw agreed with Bot",
+          isClockRunning: false,
+          activeModal: "game_over",
+        });
+      } else {
+        const botName = BOT_TIERS[botTier]?.name || "Bot";
+        get().addNotification({
+          type: "announcement",
+          title: "Draw Declined",
+          message: `${botName} declined your draw offer. Continue playing!`,
+        });
+      }
+    } else if (mode === "pass_and_play") {
+      sound.playGameOver();
+      set({
+        status: "ended",
+        result: "1/2-1/2",
+        termination: "Draw agreed by players",
+        isClockRunning: false,
+        activeModal: "game_over",
+      });
     }
   },
 
@@ -787,37 +937,54 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   tickClock: () => {
-    const { status, isClockRunning, whiteMs, blackMs, turn, lastMoveTimestamp } = get();
+    const { status, isClockRunning, turn, whiteMs, blackMs, lastMoveTimestamp } = get();
     if (status !== "active" || !isClockRunning) return;
 
-    const display = getCurrentClockDisplay(
-      {
-        whiteMs,
-        blackMs,
-        activeTurn: turn,
-        lastMoveTimestamp,
-      },
-      Date.now(),
-    );
+    const now = Date.now();
+    const elapsed = Math.max(0, now - lastMoveTimestamp);
+    if (elapsed === 0) return;
 
-    if (display.flagged) {
-      sound.playGameOver();
-      const winner = turn === "w" ? "Black" : "White";
+    if (turn === "w") {
+      const remaining = Math.max(0, whiteMs - elapsed);
+      if (remaining === 0) {
+        sound.playGameOver();
+        const winner = "Black";
+        set({
+          status: "ended",
+          result: "0-1",
+          termination: `Time out - ${winner} wins on time`,
+          whiteMs: 0,
+          lastMoveTimestamp: now,
+          isClockRunning: false,
+          activeModal: "game_over",
+        });
+        return;
+      }
       set({
-        status: "ended",
-        result: turn === "w" ? "0-1" : "1-0",
-        termination: `Time out - ${winner} wins on time`,
-        whiteMs: display.whiteMs,
-        blackMs: display.blackMs,
-        activeModal: "game_over",
+        whiteMs: remaining,
+        lastMoveTimestamp: now,
       });
-      return;
+    } else {
+      const remaining = Math.max(0, blackMs - elapsed);
+      if (remaining === 0) {
+        sound.playGameOver();
+        const winner = "White";
+        set({
+          status: "ended",
+          result: "1-0",
+          termination: `Time out - ${winner} wins on time`,
+          blackMs: 0,
+          lastMoveTimestamp: now,
+          isClockRunning: false,
+          activeModal: "game_over",
+        });
+        return;
+      }
+      set({
+        blackMs: remaining,
+        lastMoveTimestamp: now,
+      });
     }
-
-    set({
-      whiteMs: display.whiteMs,
-      blackMs: display.blackMs,
-    });
   },
 }));
 
@@ -829,6 +996,12 @@ function handleBotMoveReceived(
   set: (partial: Partial<GameState>) => void,
   get: () => GameState,
 ): void {
+  const { mode, status, playerColor, turn } = get();
+  set({ isBotThinking: false });
+  if (mode !== "bot" || status !== "active") return;
+  // If it's already the player's turn (e.g. user took back a move while bot was thinking), ignore stale move
+  if (turn === (playerColor === "white" ? "w" : "b")) return;
+
   if (!uciMove || uciMove === "(none)" || uciMove.length < 4) return;
 
   const from = uciMove.slice(0, 2);
@@ -866,6 +1039,21 @@ function handleBotMoveReceived(
     { incrementMs: get().incrementMs },
     now,
   );
+
+  if (clockResult.flagged) {
+    sound.playGameOver();
+    const winner = get().turn === "w" ? "Black" : "White";
+    set({
+      status: "ended",
+      result: get().turn === "w" ? "0-1" : "1-0",
+      termination: `Time out - ${winner} wins on time`,
+      whiteMs: clockResult.whiteMs,
+      blackMs: clockResult.blackMs,
+      isClockRunning: false,
+      activeModal: "game_over",
+    });
+    return;
+  }
 
   const nextMoves = [...get().moves, validation.san];
   const isOver = validation.snapshot.isGameOver;
@@ -914,6 +1102,14 @@ function connectToOnlineGame(
   const ws = new WebSocket(gameWsUrl);
   activeGameWs = ws;
 
+  const isGuest = get().isGuest;
+  incrementOnlineGame(isGuest);
+  const playerName = isGuest ? get().guestName : "You";
+  const playerRating = isGuest ? 0 : 1000;
+
+  const currentTc = get().timeControl;
+  const config = TC_CONFIG[currentTc] ?? TC_CONFIG["3+2"] ?? { initialMs: 180000, incMs: 2000 };
+
   set({
     activeView: "game",
     mode: "online",
@@ -922,15 +1118,20 @@ function connectToOnlineGame(
     boardOrientation: playerColor,
     whitePlayer:
       playerColor === "white"
-        ? { name: "You", rating: 1567 }
-        : { name: opponent.name, rating: opponent.rating, id: opponent.id },
+        ? { name: playerName, rating: playerRating }
+        : { name: opponent.name, rating: opponent.rating ?? (isGuest ? 0 : 1000), id: opponent.id },
     blackPlayer:
       playerColor === "black"
-        ? { name: "You", rating: 1567 }
-        : { name: opponent.name, rating: opponent.rating, id: opponent.id },
+        ? { name: playerName, rating: playerRating }
+        : { name: opponent.name, rating: opponent.rating ?? (isGuest ? 0 : 1000), id: opponent.id },
     status: "active",
     fen: STARTING_FEN,
     turn: "w",
+    whiteMs: config.initialMs,
+    blackMs: config.initialMs,
+    incrementMs: config.incMs,
+    lastMoveTimestamp: Date.now(),
+    isClockRunning: true,
     moves: [],
     lastMove: null,
     isCheck: false,
@@ -955,7 +1156,7 @@ function connectToOnlineGame(
 
     const frame = parsed.data;
 
-    if (frame.type === "GAME_SYNC") {
+    if (frame.type === "GAME_SNAPSHOT") {
       const payload = frame.payload;
       set({
         fen: payload.fen,
@@ -963,9 +1164,10 @@ function connectToOnlineGame(
         moves: payload.moves,
         whiteMs: payload.whiteMs,
         blackMs: payload.blackMs,
-        lastMoveTimestamp: payload.lastMoveTimestamp ?? 0,
-        whiteConnected: payload.whiteConnected,
-        blackConnected: payload.blackConnected,
+        incrementMs: payload.incrementMs ?? get().incrementMs,
+        lastMoveTimestamp: Date.now(),
+        whiteConnected: payload.white?.connected ?? true,
+        blackConnected: payload.black?.connected ?? true,
         status: payload.status,
         result: payload.result ?? null,
         termination: payload.termination ?? null,
@@ -991,8 +1193,9 @@ function connectToOnlineGame(
         lastMove: { from: payload.from, to: payload.to },
         whiteMs: payload.whiteMs,
         blackMs: payload.blackMs,
-        lastMoveTimestamp: payload.lastMoveTimestamp,
+        lastMoveTimestamp: Date.now(),
         isCheck: check,
+        isClockRunning: get().status === "active",
       });
     } else if (frame.type === "GAME_TERMINATED") {
       sound.playGameOver();
@@ -1003,8 +1206,20 @@ function connectToOnlineGame(
         termination: frame.payload.termination,
         whiteRatingDiff: frame.payload.whiteRatingDiff,
         blackRatingDiff: frame.payload.blackRatingDiff,
+        isClockRunning: false,
         activeModal: "game_over",
       });
+    } else if (frame.type === "TAKEBACK_RESOLVED") {
+      if (frame.payload.accepted && frame.payload.fen) {
+        set({
+          fen: frame.payload.fen,
+          turn: frame.payload.fen.split(" ")[1] as "w" | "b",
+          whiteMs: frame.payload.whiteMs ?? get().whiteMs,
+          blackMs: frame.payload.blackMs ?? get().blackMs,
+          lastMoveTimestamp: Date.now(),
+          isCheck: isInCheck(frame.payload.fen),
+        });
+      }
     } else if (frame.type === "DRAW_OFFERED") {
       set({ drawOfferedBy: frame.from });
     } else if (frame.type === "DRAW_DECLINED") {

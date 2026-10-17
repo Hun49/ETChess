@@ -49,6 +49,7 @@ export const PlayFriendView: React.FC = () => {
       icon: Zap,
       tcs: [
         { key: "1+0" as const, label: "1 min", sub: "1+0" },
+        { key: "1+1" as const, label: "1 | 1", sub: "1+1" },
         { key: "2+0" as const, label: "2 min", sub: "2+0" },
       ],
     },

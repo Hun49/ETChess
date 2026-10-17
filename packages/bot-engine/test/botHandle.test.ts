@@ -1,3 +1,4 @@
+import { BOT_TIERS } from "@etchess/types";
 import { describe, expect, it } from "vitest";
 import { BotHandle, type EngineTransport } from "../src/botHandle";
 
@@ -53,7 +54,9 @@ describe("BotHandle lifecycle", () => {
     expect(transport.sentCommands).toContain(
       "position fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
-    expect(transport.sentCommands).toContain("go depth 7 movetime 800");
+    expect(transport.sentCommands).toContain(
+      `go depth ${BOT_TIERS.intermediate.depthLimit} movetime ${BOT_TIERS.intermediate.timeLimitMs}`,
+    );
 
     // Engine responds with bestmove
     transport.emit("bestmove e2e4 ponder e7e5");

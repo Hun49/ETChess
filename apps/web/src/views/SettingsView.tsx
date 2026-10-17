@@ -464,9 +464,20 @@ export const SettingsView: React.FC = () => {
               <div className="space-y-3">
                 <div className="flex items-center justify-between rounded-xl border border-[#162e33] bg-[#0e1e22] p-3.5">
                   <span className="text-xs text-[#8ba3a8]">Username</span>
-                  <span className="text-xs font-bold text-white">
-                    {session?.user?.name || (isGuest ? guestName : "Anonymous")}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">
+                      {session?.user?.name || (isGuest ? guestName : "Anonymous")}
+                    </span>
+                    {session?.user && (
+                      <button
+                        type="button"
+                        onClick={() => openModal("edit_profile")}
+                        className="rounded-lg border border-[#162e33] bg-[#0b171a] px-2 py-1 text-[11px] font-bold text-[#00e699] hover:border-[#00e699]/40 transition-colors cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center justify-between rounded-xl border border-[#162e33] bg-[#0e1e22] p-3.5">
                   <span className="text-xs text-[#8ba3a8]">Email</span>

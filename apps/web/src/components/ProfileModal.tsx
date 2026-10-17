@@ -3,6 +3,7 @@ import type React from "react";
 import { useEffect, useState } from "react";
 import { api, signOut, useSession } from "../lib/api";
 import { useGameStore } from "../store/gameStore";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 interface UserProfileData {
   user: {
@@ -91,12 +92,15 @@ export const ProfileModal: React.FC = () => {
             {session?.user.name ? session.user.name.charAt(0).toUpperCase() : "U"}
           </div>
           <div>
-            <h2 id="profile-modal-title" className="text-xl font-bold text-white">
-              {session?.user.name || "Player"}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 id="profile-modal-title" className="text-xl font-bold text-white">
+                {session?.user.name || "Player"}
+              </h2>
+              <VerifiedBadge size="sm" showLabel />
+            </div>
             <p className="text-xs text-neutral-400">{session?.user.email}</p>
             <div className="mt-1 flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#00e699]/10 px-2 py-0.5 text-[10px] font-semibold text-[#00e699] border border-[#00e699]/20">
                 <Trophy className="h-3 w-3" />
                 Glicko-2 Rated
               </span>

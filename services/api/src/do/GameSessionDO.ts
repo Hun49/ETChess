@@ -292,6 +292,7 @@ export class GameSessionDO extends DurableObject<Env> {
         rated: state.rated,
         isFriendGame: state.isFriendGame,
         canTakeback: state.canTakeback,
+        lastMoveTimestamp: state.lastMoveServerTime,
         result: state.result,
         termination: state.termination,
         winner: state.winnerRole,
@@ -1428,6 +1429,7 @@ export class GameSessionDO extends DurableObject<Env> {
         whiteMs: state.whiteMs,
         blackMs: state.blackMs,
         turn: state.turn,
+        lastMoveTimestamp: now,
         lagCreditMs: clockResult.lagCreditMs,
       },
     });

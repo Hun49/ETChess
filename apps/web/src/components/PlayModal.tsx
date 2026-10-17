@@ -1,4 +1,4 @@
-import { type BotTier, TIME_CONTROLS, type TimeControlKey } from "@etchess/types";
+import { BOT_TIERS, type BotTier, TIME_CONTROLS, type TimeControlKey } from "@etchess/types";
 import { Bot, Check, Clock, Flame, Shield, Users, X, Zap } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
@@ -7,27 +7,27 @@ import { useGameStore } from "../store/gameStore";
 const BOT_TIER_OPTIONS: { id: BotTier; name: string; elo: number; description: string }[] = [
   {
     id: "beginner",
-    name: "Beginner",
-    elo: 800,
-    description: "Makes frequent tactical blunders, perfect for learning",
+    name: BOT_TIERS.beginner.name,
+    elo: BOT_TIERS.beginner.elo,
+    description: BOT_TIERS.beginner.description,
   },
   {
     id: "intermediate",
-    name: "Intermediate",
-    elo: 1300,
-    description: "Solid fundamentals, searches 2 moves ahead",
+    name: BOT_TIERS.intermediate.name,
+    elo: BOT_TIERS.intermediate.elo,
+    description: BOT_TIERS.intermediate.description,
   },
   {
     id: "advanced",
-    name: "Advanced",
-    elo: 2000,
-    description: "Tactical vision and positional awareness",
+    name: BOT_TIERS.advanced.name,
+    elo: BOT_TIERS.advanced.elo,
+    description: BOT_TIERS.advanced.description,
   },
   {
     id: "master",
-    name: "Master",
-    elo: 2800,
-    description: "Deep calculations, punishing inaccuracies",
+    name: BOT_TIERS.master.name,
+    elo: BOT_TIERS.master.elo,
+    description: BOT_TIERS.master.description,
   },
 ];
 

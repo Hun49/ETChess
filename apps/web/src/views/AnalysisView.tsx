@@ -21,6 +21,8 @@ import {
 import type React from "react";
 import { useMemo, useState } from "react";
 import { Chessboard } from "react-chessboard";
+import { useSession } from "../lib/api";
+import { GUEST_LIMITS, REGISTERED_LIMITS, getQuotaRemaining } from "../lib/quota";
 import { useGameStore } from "../store/gameStore";
 
 interface ClassifiedMove {
@@ -44,76 +46,19 @@ export const AnalysisView: React.FC = () => {
     setActiveView,
     settings,
     boardTheme,
+    isGuest,
   } = useGameStore();
+
+  const { data: session } = useSession();
+  const quota = getQuotaRemaining(isGuest, session?.user?.id);
 
   const [currentPly, setCurrentPly] = useState<number>(moves.length);
   const [copied, setCopied] = useState(false);
 
-  // Generate synthetic analysis data for the moves
+  // Generate analysis data for moves
   const moveClassifications: ClassifiedMove[] = useMemo(() => {
     if (moves.length === 0) {
-      // Mock demonstration game if empty
-      const demoMoves = [
-        "e4",
-        "e5",
-        "Nf3",
-        "Nc6",
-        "Bb5",
-        "a6",
-        "Ba4",
-        "Nf6",
-        "O-O",
-        "Be7",
-        "Re1",
-        "b5",
-        "Bb3",
-        "d6",
-        "c3",
-        "O-O",
-        "h3",
-        "Nb8",
-        "d4",
-        "Nbd7",
-      ];
-      return demoMoves.map((san, idx) => {
-        const isWhite = idx % 2 === 0;
-        let classification: ClassifiedMove["classification"] = "good";
-        let evalScore = Number((0.2 + idx * 0.08 * (isWhite ? 1 : -0.8)).toFixed(1));
-        let commentary: string | undefined;
-        let bestAlternative: string | undefined;
-
-        if (idx === 6) {
-          classification = "best";
-          commentary =
-            "Excellent tactical development, retreating safely while preserving the diagonal.";
-          evalScore = 0.6;
-        } else if (idx === 11) {
-          classification = "inaccuracy";
-          commentary = "Slightly weakens queenside pawn structure prematurely.";
-          bestAlternative = "d6";
-          evalScore = 0.9;
-        } else if (idx === 14) {
-          classification = "best";
-          commentary = "Key preparation move controlling the d4 push.";
-          evalScore = 1.2;
-        } else if (idx === 17) {
-          classification = "mistake";
-          commentary = "Passive maneuver allowing white to seize center tempo.";
-          bestAlternative = "Bb7";
-          evalScore = 1.8;
-        }
-
-        return {
-          moveNumber: Math.floor(idx / 2) + 1,
-          ply: idx + 1,
-          san,
-          player: isWhite ? "white" : "black",
-          classification,
-          evalScore,
-          commentary,
-          bestAlternative,
-        };
-      });
+      return [];
     }
 
     return moves.map((san, idx) => {
@@ -186,6 +131,60 @@ export const AnalysisView: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  if (moves.length === 0) {
+    return (
+      <div className="flex h-full w-full flex-col overflow-y-auto bg-[#081214] p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto w-full max-w-xl space-y-6">
+          <div className="flex items-center gap-3 border-b border-[#14282c] pb-4">
+            <button
+              type="button"
+              onClick={() => setActiveView("home")}
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#14282c] bg-[#0b171a] text-neutral-300 hover:border-[#00e699] hover:text-white transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <div>
+              <h1 className="text-xl font-black text-white tracking-tight">Game Review</h1>
+              <p className="text-xs text-[#8ba3a8]">
+                Deep engine move evaluation and accuracy analysis
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-[#14282c] bg-[#0b171a] p-8 text-center space-y-4 shadow-xl">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#00e699]/15 border border-[#00e699]/30 text-[#00e699]">
+              <Sparkles className="h-8 w-8" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-black text-white">No Game Loaded for Analysis</h2>
+              <p className="text-xs text-[#8ba3a8] max-w-sm mx-auto leading-relaxed">
+                Complete an online match or practice against the computer bot to review your moves,
+                blunder reports, and tactical alternatives.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-3">
+              <button
+                type="button"
+                onClick={() => setActiveView("play_online")}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[#00e699] px-6 py-3 text-xs font-black text-neutral-950 hover:bg-[#00c885] transition-all cursor-pointer"
+              >
+                <span>Play Online Match</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("play_computer")}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-[#162e33] bg-[#0e1e22] px-6 py-3 text-xs font-bold text-white hover:bg-[#122429] transition-all cursor-pointer"
+              >
+                <span>Practice vs Bot</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto bg-[#081214] p-4 sm:p-6 lg:p-8">
       <div className="mx-auto w-full max-w-6xl space-y-6">
@@ -204,6 +203,11 @@ export const AnalysisView: React.FC = () => {
                 <h1 className="text-xl font-black text-white tracking-tight">Game Review</h1>
                 <span className="rounded-md border border-[#00e699]/30 bg-[#00e699]/15 px-2 py-0.5 text-xs font-bold text-[#00e699]">
                   Analyzed
+                </span>
+                <span className="rounded-full bg-[#00e699]/10 border border-[#00e699]/30 px-2.5 py-0.5 text-[11px] font-bold text-[#00e699]">
+                  {quota.analysesRemaining}/
+                  {isGuest ? GUEST_LIMITS.maxAnalyses : REGISTERED_LIMITS.maxAnalyses} analyses left
+                  today
                 </span>
               </div>
               <p className="text-xs text-[#8ba3a8]">

@@ -3,10 +3,12 @@ import {
   AlertCircle,
   AlertTriangle,
   Award,
+  Bot,
   Check,
   ChevronRight,
   Clock,
   Copy,
+  Cpu,
   Crown,
   Eye,
   Flag,
@@ -16,6 +18,7 @@ import {
   RotateCcw,
   Send,
   Sparkles,
+  Undo2,
   Volume2,
   VolumeX,
   Wifi,
@@ -138,6 +141,8 @@ export const InGameView: React.FC = () => {
     blackConnected,
     drawOfferedBy,
     rematchOfferedBy,
+    isBotThinking,
+    takebackBotMove,
     makeMove,
     resign,
     offerDraw,
@@ -193,6 +198,10 @@ export const InGameView: React.FC = () => {
   const bottomClockMs = isWhiteOrientation ? whiteMs : blackMs;
   const isTopTurn = isWhiteOrientation ? turn === "b" : turn === "w";
   const isBottomTurn = isWhiteOrientation ? turn === "w" : turn === "b";
+
+  const isTopBot =
+    mode === "bot" && (isWhiteOrientation ? playerColor === "white" : playerColor === "black");
+  const isBottomBot = mode === "bot" && !isTopBot;
 
   const { whiteCaptured, blackCaptured, whiteScore, blackScore } = useMemo(
     () => getCapturedPieces(fen),
@@ -453,21 +462,48 @@ export const InGameView: React.FC = () => {
           <div className="flex items-center justify-between rounded-xl border border-[#14282c] bg-[#0b171a] px-3 py-2 shadow-sm">
             <div className="flex items-center gap-2.5">
               <div className="relative">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0e1e22] border border-[#162e33] text-sm font-bold text-white">
-                  {topPlayer.name.slice(0, 2).toUpperCase()}
+                <div
+                  className={`flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-bold ${
+                    isTopBot
+                      ? "bg-[#00e699]/15 border-[#00e699]/30 text-[#00e699]"
+                      : "bg-[#0e1e22] border-[#162e33] text-white"
+                  }`}
+                >
+                  {isTopBot ? (
+                    <Bot className="h-5 w-5" />
+                  ) : (
+                    topPlayer.name.slice(0, 2).toUpperCase()
+                  )}
                 </div>
                 <span
                   className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0b171a] ${
-                    opponentConnected ? "bg-[#00e699]" : "bg-neutral-500"
+                    isTopBot
+                      ? isBotThinking
+                        ? "bg-amber-400 animate-ping"
+                        : "bg-[#00e699]"
+                      : opponentConnected
+                        ? "bg-[#00e699]"
+                        : "bg-neutral-500"
                   }`}
                 />
               </div>
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs sm:text-sm font-bold text-white">{topPlayer.name}</span>
+                  {isTopBot && (
+                    <span className="rounded bg-[#00e699]/15 border border-[#00e699]/30 px-1.5 py-0.5 text-[9px] font-bold text-[#00e699]">
+                      BOT
+                    </span>
+                  )}
                   <span className="rounded bg-[#0e1e22] px-1.5 py-0.5 text-[10px] font-mono text-[#8ba3a8]">
                     {topPlayer.rating}
                   </span>
+                  {isTopBot && isBotThinking && (
+                    <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-400 animate-pulse">
+                      <Cpu className="h-3 w-3 animate-spin" />
+                      Thinking...
+                    </span>
+                  )}
                 </div>
                 {/* Captured Pieces & Score */}
                 <div className="flex items-center gap-1 text-[11px] text-[#8ba3a8]">
@@ -521,19 +557,44 @@ export const InGameView: React.FC = () => {
           <div className="flex items-center justify-between rounded-xl border border-[#14282c] bg-[#0b171a] px-3 py-2 shadow-sm">
             <div className="flex items-center gap-2.5">
               <div className="relative">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#00e699]/20 border border-[#00e699]/40 text-sm font-bold text-[#00e699]">
-                  {bottomPlayer.name.slice(0, 2).toUpperCase()}
+                <div
+                  className={`flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-bold ${
+                    isBottomBot
+                      ? "bg-[#00e699]/15 border-[#00e699]/30 text-[#00e699]"
+                      : "bg-[#00e699]/20 border-[#00e699]/40 text-[#00e699]"
+                  }`}
+                >
+                  {isBottomBot ? (
+                    <Bot className="h-5 w-5" />
+                  ) : (
+                    bottomPlayer.name.slice(0, 2).toUpperCase()
+                  )}
                 </div>
-                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0b171a] bg-[#00e699]" />
+                <span
+                  className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0b171a] ${
+                    isBottomBot && isBotThinking ? "bg-amber-400 animate-ping" : "bg-[#00e699]"
+                  }`}
+                />
               </div>
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs sm:text-sm font-bold text-white">
                     {bottomPlayer.name}
                   </span>
+                  {isBottomBot && (
+                    <span className="rounded bg-[#00e699]/15 border border-[#00e699]/30 px-1.5 py-0.5 text-[9px] font-bold text-[#00e699]">
+                      BOT
+                    </span>
+                  )}
                   <span className="rounded bg-[#0e1e22] px-1.5 py-0.5 text-[10px] font-mono text-[#8ba3a8]">
                     {bottomPlayer.rating}
                   </span>
+                  {isBottomBot && isBotThinking && (
+                    <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-400 animate-pulse">
+                      <Cpu className="h-3 w-3 animate-spin" />
+                      Thinking...
+                    </span>
+                  )}
                 </div>
                 {/* Captured Pieces & Score */}
                 <div className="flex items-center gap-1 text-[11px] text-[#8ba3a8]">
@@ -567,6 +628,17 @@ export const InGameView: React.FC = () => {
 
           {/* Quick Mobile Action Buttons Bar */}
           <div className="flex lg:hidden items-center justify-between gap-1.5 pt-1">
+            {mode === "bot" && (
+              <button
+                type="button"
+                onClick={takebackBotMove}
+                disabled={status !== "active" || moves.length === 0 || isBotThinking}
+                className="flex-1 flex items-center justify-center gap-1 rounded-xl border border-[#14282c] bg-[#0b171a] py-2 text-xs font-semibold text-[#00e699] disabled:opacity-40 hover:bg-[#00e699]/10 transition-colors"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                <span>Takeback</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={offerDraw}
@@ -680,7 +752,18 @@ export const InGameView: React.FC = () => {
 
             {/* Action Bar at the bottom of moves panel */}
             <div className="border-t border-[#14282c] p-3 space-y-2 bg-[#081214]/60">
-              <div className="grid grid-cols-2 gap-2">
+              <div className={`grid ${mode === "bot" ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
+                {mode === "bot" && (
+                  <button
+                    type="button"
+                    onClick={takebackBotMove}
+                    disabled={status !== "active" || moves.length === 0 || isBotThinking}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-[#14282c] bg-[#0e1e22] py-2.5 text-xs font-semibold text-[#00e699] hover:border-[#00e699]/40 hover:bg-[#00e699]/10 transition-colors disabled:opacity-40"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" />
+                    <span>Takeback</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={offerDraw}

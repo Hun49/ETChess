@@ -1,7 +1,9 @@
 import type React from "react";
 import { useEffect } from "react";
 import { AuthModal } from "./components/AuthModal";
+import { EditProfileModal } from "./components/EditProfileModal";
 import { LeaderboardModal } from "./components/LeaderboardModal";
+import { LimitReachedModal } from "./components/LimitReachedModal";
 import { MobileNav } from "./components/MobileNav";
 import { NotificationDrawer } from "./components/NotificationDrawer";
 import { Sidebar } from "./components/Sidebar";
@@ -82,7 +84,9 @@ export const App: React.FC = () => {
 
       {/* Global Modals & Drawers */}
       <AuthModal />
+      <EditProfileModal />
       <LeaderboardModal />
+      <LimitReachedModal />
       <NotificationDrawer />
       <SkillOnboardingModal />
     </div>

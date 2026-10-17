@@ -2,18 +2,34 @@ import type { TimeControlKey } from "@etchess/types";
 import { AlertCircle, Clock, Flame, Shield, Sparkles, User, Zap } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
+import { useSession } from "../lib/api";
+import { GUEST_LIMITS, canPlayOnline, getQuotaRemaining } from "../lib/quota";
 import type { GuestSkillLevel } from "../store/gameStore";
 import { useGameStore } from "../store/gameStore";
 
 export const PlayOnlineView: React.FC = () => {
-  const { joinMatchmaking, isGuest, guestName, guestSkillLevel, setGuestSkillLevel, openModal } =
-    useGameStore();
+  const {
+    joinMatchmaking,
+    isGuest,
+    guestName,
+    guestSkillLevel,
+    setGuestSkillLevel,
+    openModal,
+    openLimitModal,
+  } = useGameStore();
+  const { data: session } = useSession();
 
   const [selectedTc, setSelectedTc] = useState<TimeControlKey>("3+2");
   const [rated, setRated] = useState(!isGuest);
   const [fastMatch, setFastMatch] = useState(true);
 
+  const quota = getQuotaRemaining(isGuest, session?.user?.id);
+
   const handleFindMatch = () => {
+    if (isGuest && !canPlayOnline(true, session?.user?.id)) {
+      openLimitModal("online");
+      return;
+    }
     // Guests are strictly unrated and match with other guests in their chosen skill level
     joinMatchmaking(selectedTc, isGuest ? false : rated);
   };
@@ -27,9 +43,14 @@ export const PlayOnlineView: React.FC = () => {
             {isGuest ? "Guest Matchmaking" : "Play Online"}
           </h1>
           {isGuest && (
-            <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-xs font-bold text-amber-400">
-              {guestName} • Unrated
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-[#00e699]/15 border border-[#00e699]/30 px-3 py-1 text-xs font-bold text-[#00e699]">
+                {quota.onlineGamesRemaining}/{GUEST_LIMITS.maxOnlineGames} games left today
+              </span>
+              <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-xs font-bold text-amber-400">
+                {guestName} • Unrated
+              </span>
+            </div>
           )}
         </div>
         <p className="text-xs text-[#8ba3a8] mt-1">
@@ -233,9 +254,17 @@ export const PlayOnlineView: React.FC = () => {
           <button
             type="button"
             onClick={handleFindMatch}
-            className="w-full rounded-xl bg-[#00e699] py-3.5 text-center text-sm font-extrabold text-neutral-950 shadow-lg shadow-[#00e699]/20 hover:bg-[#00e699]/90 transition-all cursor-pointer"
+            className={`w-full rounded-xl py-3.5 text-center text-sm font-extrabold shadow-lg transition-all cursor-pointer ${
+              isGuest && quota.onlineGamesRemaining === 0
+                ? "bg-amber-500 text-neutral-950 shadow-amber-500/20 hover:bg-amber-400"
+                : "bg-[#00e699] text-neutral-950 shadow-[#00e699]/20 hover:bg-[#00c885]"
+            }`}
           >
-            {isGuest ? `Find Guest Match (${guestSkillLevel.toUpperCase()})` : "Find Match"}
+            {isGuest
+              ? quota.onlineGamesRemaining === 0
+                ? "Daily Guest Limit Reached (0/5) — Sign In to Play"
+                : `Find Guest Match (${guestSkillLevel.toUpperCase()}) • (${quota.onlineGamesRemaining} left today)`
+              : "Find Match"}
           </button>
         </div>
 
