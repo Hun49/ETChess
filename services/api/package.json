@@ -17,24 +17,24 @@
     "db:migrate:local": "wrangler d1 migrations apply etchess-d1 --local"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "^1.7.10",
+    "@better-auth/drizzle-adapter": "^1.7.12",
     "@etchess/chess-core": "workspace:*",
     "@etchess/rating": "workspace:*",
     "@etchess/realtime-protocol": "workspace:*",
     "@etchess/types": "workspace:*",
     "@hono/zod-validator": "^0.9.1",
-    "better-auth": "^1.7.10",
+    "better-auth": "^1.7.12",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.13",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.4.3",
-    "@cloudflare/workers-types": "^5.20261016.1",
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "@cloudflare/workers-types": "^5.20261023.1",
     "@etchess/config": "workspace:*",
     "drizzle-kit": "^0.31.11",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
-    "wrangler": "^4.151.0"
+    "wrangler": "^4.152.0"
   }
 }
